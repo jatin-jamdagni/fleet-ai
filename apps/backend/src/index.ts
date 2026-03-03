@@ -5,6 +5,7 @@ import { authRoutes } from "./modules/auth/auth.routes";
 import { prisma } from "./db/prisma";
 import { setupTenantIsolation } from "./middleware/tenant.middleware";  // ← ADD
 import { vehicleRoutes } from "./modules/vehicles/vehicles.routes";
+import { userPublicRoutes, userRoutes, userSelfRoutes } from "./modules/users/users.routes";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -86,11 +87,15 @@ const app = new Elysia()
   .group("/api/v1", (app) =>
     app
       .use(authRoutes)
-      // More route groups added here in coming days:
+      .use(userPublicRoutes)   // ← public first (accept-invite)
+      .use(userRoutes)         // ← protected manager routes
+      .use(userSelfRoutes)  // ← self-service (change password)
       .use(vehicleRoutes)
-      // .use(tripRoutes)
-      // .use(billingRoutes)
-      // .use(aiRoutes)
+
+    // .use(tripRoutes)
+    // .use(billingRoutes)
+    // .use(aiRoutes)
+
   )
 
   // ─── Global error handler ──────────────────────────────────────────────────
