@@ -6,6 +6,8 @@ import { prisma } from "./db/prisma";
 import { setupTenantIsolation } from "./middleware/tenant.middleware";  // ← ADD
 import { vehicleRoutes } from "./modules/vehicles/vehicles.routes";
 import { userPublicRoutes, userRoutes, userSelfRoutes } from "./modules/users/users.routes";
+import { startBatchWriter } from "./modules/websocket/ws.batch";
+import { tripDriverRoutes, tripManagerRoutes } from "./modules/trips/trips.routes";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -19,7 +21,9 @@ for (const key of required) {
 }
 
 // ─── Register Prisma middleware BEFORE app starts ─────────────────────────────
-setupTenantIsolation();  // ← ADD THIS LINE
+setupTenantIsolation();
+startBatchWriter();
+
 
 const app = new Elysia()
   .use(
@@ -91,8 +95,8 @@ const app = new Elysia()
       .use(userRoutes)         // ← protected manager routes
       .use(userSelfRoutes)  // ← self-service (change password)
       .use(vehicleRoutes)
-
-    // .use(tripRoutes)
+      .use(tripManagerRoutes)
+      .use(tripDriverRoutes)
     // .use(billingRoutes)
     // .use(aiRoutes)
 
