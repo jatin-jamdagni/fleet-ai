@@ -8,6 +8,7 @@ import { vehicleRoutes } from "./modules/vehicles/vehicles.routes";
 import { userPublicRoutes, userRoutes, userSelfRoutes } from "./modules/users/users.routes";
 import { startBatchWriter } from "./modules/websocket/ws.batch";
 import { tripDriverRoutes, tripManagerRoutes } from "./modules/trips/trips.routes";
+import { billingRoutes } from "./modules/billing/billing.routes";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -97,6 +98,7 @@ const app = new Elysia()
       .use(vehicleRoutes)
       .use(tripManagerRoutes)
       .use(tripDriverRoutes)
+      .use(billingRoutes)
     // .use(billingRoutes)
     // .use(aiRoutes)
 
