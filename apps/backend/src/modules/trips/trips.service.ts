@@ -37,6 +37,22 @@ export async function startTrip(user: UserContext, vehicleId: string) {
             );
         }
 
+        // Driver must not have another active trip
+        const existingTrip = await prisma.trip.findFirst({
+            where: {
+                driverId: user.userId,
+                status: { in: ["ACTIVE", "PENDING"] },
+            },
+        });
+
+        if (existingTrip) {
+            throw new AppError(
+                "DRIVER_IN_TRIP",
+                "You already have an active trip. End it before starting a new one.",
+                409
+            );
+        }
+
         // Vehicle must be ACTIVE — not already IN_TRIP
         if (vehicle.status === "IN_TRIP") {
             throw new AppError(
@@ -50,22 +66,6 @@ export async function startTrip(user: UserContext, vehicleId: string) {
             throw new AppError(
                 "VEHICLE_INACTIVE",
                 "This vehicle is inactive. Contact your Fleet Manager.",
-                409
-            );
-        }
-
-        // Driver must not have another active trip
-        const existingTrip = await prisma.trip.findFirst({
-            where: {
-                driverId: user.userId,
-                status: { in: ["ACTIVE", "PENDING"] },
-            },
-        });
-
-        if (existingTrip) {
-            throw new AppError(
-                "DRIVER_IN_TRIP",
-                "You already have an active trip. End it before starting a new one.",
                 409
             );
         }
@@ -142,7 +142,7 @@ export async function endTrip(
                 ARRAY(
                   SELECT ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geometry
                   FROM gps_pings
-                  WHERE trip_id = ${tripId}
+                  WHERE "tripId" = ${tripId}
                   ORDER BY timestamp ASC
                 )
               )::geography

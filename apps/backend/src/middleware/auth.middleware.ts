@@ -67,7 +67,19 @@ export function requireRole(...allowedRoles: Role[]) {
   return new Elysia({ name: `require-${allowedRoles.join("|")}` })
     .use(authMiddleware)
     .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
-      if (!user || !allowedRoles.includes(user.role)) {
+      if (!user) {
+        set.status = 401;
+        return {
+          success: false,
+          error: {
+            code: "UNAUTHORIZED",
+            message: "Authentication required",
+            statusCode: 401,
+          },
+        };
+      }
+
+      if (!allowedRoles.includes(user.role)) {
         set.status = 403;
         return {
           success: false,

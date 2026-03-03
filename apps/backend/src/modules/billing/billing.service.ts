@@ -25,7 +25,7 @@ export async function calculateTripDistance(tripId: string): Promise<number> {
               ARRAY(
                 SELECT ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geometry
                 FROM   gps_pings
-                WHERE  trip_id = ${tripId}
+                WHERE  "tripId" = ${tripId}
                 ORDER  BY timestamp ASC
               )
             )::geography
