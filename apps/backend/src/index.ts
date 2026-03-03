@@ -4,6 +4,7 @@ import { swagger } from "@elysiajs/swagger";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { prisma } from "./db/prisma";
 import { setupTenantIsolation } from "./middleware/tenant.middleware";  // ← ADD
+import { vehicleRoutes } from "./modules/vehicles/vehicles.routes";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -86,7 +87,7 @@ const app = new Elysia()
     app
       .use(authRoutes)
       // More route groups added here in coming days:
-      // .use(vehicleRoutes)
+      .use(vehicleRoutes)
       // .use(tripRoutes)
       // .use(billingRoutes)
       // .use(aiRoutes)
