@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Fleet AI — Local",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "fleetai",
+      "Username": "fleet",
+      "Password": "fleet_dev",
+      "SSLMode": "prefer",
+      "SavePassword": true
+    }
+  }
+}

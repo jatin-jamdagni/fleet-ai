@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: ./scripts/db/postgres.Dockerfile
+    image: fleet-postgres:17-postgis-pgvector
+    container_name: fleet_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fleetai
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet_dev
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - fleet_pgdata:/var/lib/postgresql/data
+      - ./scripts/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fleet -d fleetai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: fleet_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@fleet.dev
+      PGADMIN_DEFAULT_PASSWORD: fleet_admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - fleet_pgadmin:/var/lib/pgadmin
+      - ./scripts/db/pgadmin_servers.json:/pgadmin4/servers.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  fleet_pgdata:
+  fleet_pgadmin:
+
+networks:
+  default:
+    name: fleet_network

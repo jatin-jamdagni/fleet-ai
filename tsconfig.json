@@ -1,0 +1,10 @@
+{
+  "extends": "./packages/typescript-config/base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@fleet/shared": ["./packages/shared/src/index.ts"],
+      "@fleet/shared/*": ["./packages/shared/src/*"]
+    }
+  }
+}
