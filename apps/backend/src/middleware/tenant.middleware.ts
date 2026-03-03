@@ -1,27 +1,30 @@
 import { prisma } from "../db/prisma";
 
-// Prisma middleware that auto-scopes all queries to the current tenant
-// Call this ONCE at app startup in index.ts
+// Tenant isolation is applied in db/prisma.ts via Prisma Client extensions.
+// Keep this initializer for backward compatibility with index bootstrap code.
+
 export function setupTenantIsolation() {
-  // @ts-ignore — Prisma middleware
-  prisma.$use(async (params: any, next: any) => {
-    const tenantScopedModels = [
-      "Vehicle",
-      "Trip",
-      "Invoice",
-      "ManualChunk",
-      "AILog",
-      "AuditLog",
-    ];
 
-    // We only scope reads/writes on multi-tenant models
-    // Auth operations (User lookup by email) are exempt
-    if (!tenantScopedModels.includes(params.model)) {
-      return next(params);
-    }
+  // view in db/prisma.ts for implementation details
+  console.log("✅ Tenant isolation enabled via Prisma query extensions");
+}
 
-    // tenantId is injected from route context — accessed via AsyncLocalStorage
-    // For now we enforce it at the route level; full ALS implementation in Week 2
-    return next(params);
-  });
+// ─── Audit Log Helper ─────────────────────────────────────────────────────────
+
+export async function writeAuditLog(
+  tenantId: string,
+  userId: string,
+  action: string,
+  entityType: string,
+  entityId: string,
+  metadata: Record<string, unknown> = {}
+) {
+  try {
+    await prisma.auditLog.create({
+      data: { tenantId, userId, action, entityType, entityId, metadata: metadata as any },
+    });
+  } catch (err) {
+    // Never let audit logging break main flow
+    console.error("[AuditLog] Failed to write:", err);
+  }
 }

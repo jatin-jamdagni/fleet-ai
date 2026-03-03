@@ -43,8 +43,8 @@ export async function signTokenPair(
   refreshJwt: JwtSigner
 ): Promise<TokenPair> {
   const [accessToken, refreshToken] = await Promise.all([
-    accessJwt.sign({ ...payload, type: "access" }),
-    refreshJwt.sign({ ...payload, type: "refresh" }),
+    accessJwt.sign({ ...payload, type: "access", iat: true, jti: crypto.randomUUID() }),
+    refreshJwt.sign({ ...payload, type: "refresh", iat: true, jti: crypto.randomUUID() }),
   ]);
 
   // Store hashed refresh token

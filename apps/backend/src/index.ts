@@ -3,10 +3,11 @@ import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { prisma } from "./db/prisma";
+import { setupTenantIsolation } from "./middleware/tenant.middleware";  // ← ADD
 
 const PORT = Number(process.env.PORT) || 3000;
 
-// ─── Validate required ENV vars ───────────────────────────────────────────────
+// ─── Validate ENV ─────────────────────────────────────────────────────────────
 const required = ["DATABASE_URL", "JWT_SECRET", "JWT_REFRESH_SECRET"];
 for (const key of required) {
   if (!process.env[key]) {
@@ -15,7 +16,9 @@ for (const key of required) {
   }
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
+// ─── Register Prisma middleware BEFORE app starts ─────────────────────────────
+setupTenantIsolation();  // ← ADD THIS LINE
+
 const app = new Elysia()
   .use(
     cors({
@@ -121,13 +124,13 @@ const app = new Elysia()
 
 console.log(`
 ╔══════════════════════════════════════════════════╗
-║          🚛  Fleet AI Backend  v1.0.0            ║
+          🚛  Fleet AI Backend  v1.0.0            
 ╠══════════════════════════════════════════════════╣
 ║  Status  →  Running                              ║
-║  Port    →  ${PORT}                                  ║
-║  Health  →  http://localhost:${PORT}/health          ║
-║  API     →  http://localhost:${PORT}/api/v1          ║
-║  Docs    →  http://localhost:${PORT}/docs             ║
+║  Port    →  ${PORT}                              ║
+║  Health  →  http://localhost:${PORT}/health      ║
+║  API     →  http://localhost:${PORT}/api/v1      ║
+║  Docs    →  http://localhost:${PORT}/docs        ║
 ╚══════════════════════════════════════════════════╝
 `);
 
