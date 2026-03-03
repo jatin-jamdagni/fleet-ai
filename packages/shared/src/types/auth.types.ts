@@ -1,14 +1,18 @@
-export enum Role {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  FLEET_MANAGER = "FLEET_MANAGER",
-  DRIVER = "DRIVER",
-}
+export const Role = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  FLEET_MANAGER: "FLEET_MANAGER",
+  DRIVER: "DRIVER",
+} as const;
 
-export enum Plan {
-  STARTER = "STARTER",
-  PROFESSIONAL = "PROFESSIONAL",
-  ENTERPRISE = "ENTERPRISE",
-}
+export type Role = (typeof Role)[keyof typeof Role];
+
+export const Plan = {
+  STARTER: "STARTER",
+  PROFESSIONAL: "PROFESSIONAL",
+  ENTERPRISE: "ENTERPRISE",
+} as const;
+
+export type Plan = (typeof Plan)[keyof typeof Plan];
 
 export interface JwtPayload {
   userId: string;
