@@ -1,5 +1,5 @@
 import Elysia from "elysia";
-import { authMiddleware, requireRole } from "../../middleware/auth.middleware";
+import { requireRole } from "../../middleware/auth.middleware";
 import * as VehicleService from "./vehicles.service";
 import { AppError } from "../../lib/errors";
 import { ok as okRes } from "../../lib/response";
@@ -187,6 +187,29 @@ export const vehicleRoutes = new Elysia({ prefix: "/vehicles" })
       detail: {
         tags:    ["Vehicles"],
         summary: "Assign or unassign a driver to a vehicle",
+        security: [{ bearerAuth: [] }],
+      },
+    }
+  );
+
+export const vehicleDriverRoutes = new Elysia({ prefix: "/vehicles" })
+  .use(requireRole(Role.DRIVER))
+
+  // ── GET /vehicles/mine ─────────────────────────────────────────────────────
+  .get(
+    "/mine",
+    async ({ user, set }) => {
+      try {
+        const vehicle = await VehicleService.getMyAssignedVehicle(user);
+        return okRes(vehicle);
+      } catch (e) {
+        return handleError(e, set);
+      }
+    },
+    {
+      detail: {
+        tags: ["Vehicles"],
+        summary: "Get the driver's currently assigned vehicle",
         security: [{ bearerAuth: [] }],
       },
     }

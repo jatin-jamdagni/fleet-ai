@@ -8,6 +8,8 @@ import { flushTripPings } from "../websocket/ws.batch";
 import type { UserContext } from "../../types/context";
 import { Role } from "@fleet/shared";
 import { generateInvoice } from "../billing/billing.service";
+import { onTripEnded, onTripStarted } from "../gps/gps.batch";
+import { tripsEndedTotal, tripsStartedTotal } from "../../lib/metrics";
 
 // ─── Start Trip ───────────────────────────────────────────────────────────────
 
@@ -90,6 +92,9 @@ export async function startTrip(user: UserContext, vehicleId: string) {
                 data: { status: "IN_TRIP" },
             }),
         ]);
+
+        onTripStarted();
+        tripsStartedTotal.inc();
 
         return trip;
     });
@@ -178,6 +183,9 @@ export async function endTrip(
                 data: { status: "ACTIVE" },
             }),
         ]);
+
+        onTripEnded();
+        tripsEndedTotal.inc({ reason: forced ? "force_ended" : "completed" });
 
         // Remove from live store
         fleetStore.removeVehicleState(trip.vehicleId);

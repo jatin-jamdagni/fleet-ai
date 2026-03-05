@@ -4,12 +4,8 @@ import { fleetStore } from "./ws.store";
 import { broadcastToManagers, sendFleetSnapshot } from "./ws.broadcast";
 import { processGpsPing, registerDriverConnection } from "./ws.gps";
 import { flushTripPings } from "./ws.batch";
-import { prisma } from "../../db/prisma";
-import type {
-  DriverWsMessage,
-  ManagerWsMessage,
-} from "@fleet/shared";
 import { Role } from "@fleet/shared";
+import { wsConnectionsGauge, wsConnectionsTotal } from "../../lib/metrics";
 
 // Heartbeat interval — 10 seconds
 const HEARTBEAT_INTERVAL_MS = 10_000;
@@ -58,8 +54,11 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
     // ── On Open ───────────────────────────────────────────────────────────────
     async open(ws) {
       const { userId, tenantId, role } = ws.data as any;
+      const roleLabel = role === Role.DRIVER ? "driver" : "manager";
 
       console.log(`[WS] Connection opened | Role: ${role} | User: ${userId}`);
+      wsConnectionsTotal.inc();
+      wsConnectionsGauge.inc({ role: roleLabel });
 
       if (role === Role.FLEET_MANAGER || role === Role.SUPER_ADMIN) {
         // Register manager
@@ -232,6 +231,10 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
     // ── On Close ──────────────────────────────────────────────────────────────
     async close(ws) {
       const { userId, tenantId, role } = ws.data as any;
+      if (role === Role.DRIVER || role === Role.FLEET_MANAGER || role === Role.SUPER_ADMIN) {
+        const roleLabel = role === Role.DRIVER ? "driver" : "manager";
+        wsConnectionsGauge.dec({ role: roleLabel });
+      }
 
       // Clear heartbeat
       if ((ws as any)._heartbeat) {
@@ -263,7 +266,7 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
             },
           });
         }
-      } else if (role === Role.FLEET_MANAGER) {
+      } else if (role === Role.FLEET_MANAGER || role === Role.SUPER_ADMIN) {
         fleetStore.removeManager(userId);
         console.log(`[WS] Manager disconnected: ${userId}`);
       }

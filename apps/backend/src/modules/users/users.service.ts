@@ -142,11 +142,11 @@ export async function inviteUser(
         const inviteUrl = `${process.env.WEB_URL ?? "http://localhost:5173"}/accept-invite?token=${inviteToken}`;
 
         console.log(`
-📧 [INVITE] New user invited:
-   Email:  ${input.email}
-   Role:   ${input.role}
-   Tenant: ${tenant?.name}
-   URL:    ${inviteUrl}
+            📧 [INVITE] New user invited:
+            Email:  ${input.email}
+            Role:   ${input.role}
+            Tenant: ${tenant?.name}
+            URL:    ${inviteUrl}
     `);
 
         return {

@@ -1,6 +1,7 @@
 import { prisma } from "../../db/prisma";
 import { fleetStore } from "./ws.store";
 import type { GpsPingPayload } from "@fleet/shared";
+import { recordGpsBatchWrite } from "../gps/gps.batch";
 
 // ─── Write a batch of pings for a single trip ─────────────────────────────────
 
@@ -10,6 +11,7 @@ export async function writePingBatch(
 ): Promise<number> {
   if (pings.length === 0) return 0;
 
+  const startedAt = performance.now();
   try {
     // Bulk insert — PostGIS trigger auto-populates the geometry column
     await prisma.gpsPing.createMany({
@@ -23,6 +25,9 @@ export async function writePingBatch(
       })),
       skipDuplicates: true,
     });
+
+    const elapsedMs = performance.now() - startedAt;
+    recordGpsBatchWrite(pings.length, elapsedMs);
 
     return pings.length;
   } catch (err) {

@@ -98,6 +98,21 @@ export async function listVehicles(user: UserContext, input: ListVehiclesInput) 
   });
 }
 
+// ─── Driver Assigned Vehicle ─────────────────────────────────────────────────
+
+export async function getMyAssignedVehicle(user: UserContext) {
+  return injectTenantContext(user, async () => {
+    return prisma.vehicle.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        assignedDriverId: user.userId,
+        deletedAt: null,
+      },
+      select: vehicleSelect(),
+    });
+  });
+}
+
 // ─── Get Single Vehicle ───────────────────────────────────────────────────────
 
 export async function getVehicle(user: UserContext, vehicleId: string) {

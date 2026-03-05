@@ -1,0 +1,107 @@
+{
+  "title": "Fleet AI — Overview",
+  "uid":   "fleet-overview",
+  "time":  { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active Trips",
+      "type":  "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [{
+        "expr": "fleet_active_trips",
+        "legendFormat": "Active"
+      }],
+      "options": {
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 10 },
+            { "color": "red", "value": 50 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "GPS Pings / sec",
+      "type":  "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [{
+        "expr": "rate(fleet_gps_pings_total[1m])",
+        "legendFormat": "pings/s"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "HTTP Requests / sec",
+      "type":  "graph",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "rate(fleet_http_requests_total[1m])",
+        "legendFormat": "{{method}} {{route}}"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "HTTP Latency p95 (ms)",
+      "type":  "graph",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, rate(fleet_http_duration_seconds_bucket[5m])) * 1000",
+        "legendFormat": "p95 latency"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Active WS Connections",
+      "type":  "graph",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 6 },
+      "targets": [{
+        "expr": "fleet_ws_connections_active",
+        "legendFormat": "{{role}}"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Trips Started (rate)",
+      "type":  "graph",
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 6 },
+      "targets": [{
+        "expr": "rate(fleet_trips_started_total[5m])",
+        "legendFormat": "trips/min"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "AI Query Duration p95 (s)",
+      "type":  "stat",
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 6 },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, rate(fleet_ai_query_duration_seconds_bucket[10m]))",
+        "legendFormat": "p95"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Error Rate",
+      "type":  "stat",
+      "gridPos": { "x": 0, "y": 18, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "rate(fleet_http_requests_total{status_code=~\"5..\"}[5m]) / rate(fleet_http_requests_total[5m]) * 100",
+        "legendFormat": "Error %"
+      }],
+      "options": {
+        "thresholds": {
+          "steps": [
+            { "color": "green",  "value": null },
+            { "color": "yellow", "value": 0.5 },
+            { "color": "red",    "value": 1 }
+          ]
+        }
+      }
+    }
+  ]
+}
