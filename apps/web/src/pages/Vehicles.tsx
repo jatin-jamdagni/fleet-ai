@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getApiErrorMessage, vehiclesApi, usersApi } from "../lib/api";
 import { Button, Badge, Modal, Input, Table } from "../components/ui";
 import toast from "react-hot-toast";
-import type { VehicleStatus } from "@fleet/shared";
+import type { CreateVehicleRequest, VehicleStatus } from "@fleet/shared";
 
 function statusColor(s: VehicleStatus) {
   return s === "ACTIVE" ? "green" : s === "IN_TRIP" ? "amber" : "slate";
@@ -11,30 +11,38 @@ function statusColor(s: VehicleStatus) {
 
 export default function Vehicles() {
   const qc = useQueryClient();
-  const [search,   setSearch]   = useState("");
-  const [showAdd,  setShowAdd]  = useState(false);
+  const [search, setSearch] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
   const [showAssign, setShowAssign] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    licensePlate: string;
+    make: string;
+    model: string;
+    year: number;
+    costPerKm: number;
+    speedLimitKmh: number | "";
+  }>({
     licensePlate: "",
     make: "", model: "",
     year: new Date().getFullYear(),
     costPerKm: 2.5,
+    speedLimitKmh: "",
   });
 
   const { data: stats } = useQuery({
     queryKey: ["vehicle-stats"],
-    queryFn:  () => vehiclesApi.stats().then((r) => r.data.data),
+    queryFn: () => vehiclesApi.stats().then((r) => r.data.data),
   });
 
   const { data: vehiclesRes, isLoading } = useQuery({
     queryKey: ["vehicles", search],
-    queryFn:  () => vehiclesApi.list({ search: search || undefined }).then((r) => r.data),
+    queryFn: () => vehiclesApi.list({ search: search || undefined }).then((r) => r.data),
   });
 
   const { data: driversRes } = useQuery({
     queryKey: ["drivers"],
-    queryFn:  () => usersApi.list({ role: "DRIVER" }).then((r) => r.data),
+    queryFn: () => usersApi.list({ role: "DRIVER" }).then((r) => r.data),
   });
 
   const createMut = useMutation({
@@ -43,7 +51,14 @@ export default function Vehicles() {
       qc.invalidateQueries({ queryKey: ["vehicles"] });
       qc.invalidateQueries({ queryKey: ["vehicle-stats"] });
       setShowAdd(false);
-      setForm({ licensePlate: "", make: "", model: "", year: new Date().getFullYear(), costPerKm: 2.5 });
+      setForm({
+        licensePlate: "",
+        make: "",
+        model: "",
+        year: new Date().getFullYear(),
+        costPerKm: 2.5,
+        speedLimitKmh: "",
+      });
       toast.success("Vehicle added to fleet");
     },
     onError: (err: unknown) => toast.error(getApiErrorMessage(err)),
@@ -70,7 +85,7 @@ export default function Vehicles() {
   });
 
   const vehicles = vehiclesRes?.data ?? [];
-  const drivers  = driversRes?.data ?? [];
+  const drivers = driversRes?.data ?? [];
 
   return (
     <div className="flex flex-col">
@@ -88,9 +103,9 @@ export default function Vehicles() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-px bg-white/5 border-b border-white/5">
         {[
-          { label: "TOTAL",    value: stats?.total   ?? 0 },
-          { label: "ACTIVE",   value: stats?.active  ?? 0, accent: true },
-          { label: "IN TRIP",  value: stats?.inTrip  ?? 0 },
+          { label: "TOTAL", value: stats?.total ?? 0 },
+          { label: "ACTIVE", value: stats?.active ?? 0, accent: true },
+          { label: "IN TRIP", value: stats?.inTrip ?? 0 },
           { label: "INACTIVE", value: stats?.inactive ?? 0 },
         ].map((s) => (
           <div key={s.label} className="bg-black px-6 py-4">
@@ -169,9 +184,29 @@ export default function Vehicles() {
             <Input label="Cost / km ($)" type="number" step="0.01" value={form.costPerKm}
               onChange={(e) => setForm((f) => ({ ...f, costPerKm: Number(e.target.value) }))} />
           </div>
+          <Input
+            label="Speed Limit (km/h, optional)"
+            type="number"
+            placeholder="e.g. 90"
+            value={form.speedLimitKmh}
+            onChange={(e) => setForm((f) => ({
+              ...f,
+              speedLimitKmh: e.target.value === "" ? "" : Number(e.target.value),
+            }))}
+          />
           <Button
             loading={createMut.isPending}
-            onClick={() => createMut.mutate(form)}
+            onClick={() => {
+              const payload: CreateVehicleRequest = {
+                licensePlate: form.licensePlate,
+                make: form.make,
+                model: form.model,
+                year: form.year,
+                costPerKm: form.costPerKm,
+                ...(form.speedLimitKmh === "" ? {} : { speedLimitKmh: form.speedLimitKmh }),
+              };
+              createMut.mutate(payload);
+            }}
             className="w-full justify-center mt-2"
           >
             ADD VEHICLE

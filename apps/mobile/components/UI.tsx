@@ -181,7 +181,7 @@ export function Card({
 
 // ─── Section Label ────────────────────────────────────────────────────────────
 
-export function SectionLabel({ children }: { children: string }) {
+export function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <Text style={{
       color:         C.muted,
@@ -261,8 +261,13 @@ export function StatRow({
 }: {
   label:   string;
   value:   string | number;
-  accent?: boolean;
+  accent?: boolean | string;
 }) {
+  const accentColor =
+    typeof accent === "string" ? accent :
+    accent ? C.amber :
+    C.text;
+
   return (
     <View style={{
       flexDirection:  "row",
@@ -282,7 +287,7 @@ export function StatRow({
         {label}
       </Text>
       <Text style={{
-        color:      accent ? C.amber : C.text,
+        color:      accentColor,
         fontSize:   16,
         fontWeight: "900",
         fontFamily: "monospace",

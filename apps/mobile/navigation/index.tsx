@@ -6,13 +6,14 @@ import { Text, View } from "react-native";
 import { useAuthStore } from "../store/auth.store";
 import { C } from "../components/UI";
 
-import LoginScreen   from "../screens/LoginScreen";
-import HomeScreen    from "../screens/HomeScreen";
-import AIScreen      from "../screens/AIScreen";
-import TripsScreen   from "../screens/TripsScreen";
+import LoginScreen from "../screens/LoginScreen";
+import HomeScreen from "../screens/HomeScreen";
+import AIScreen from "../screens/AIScreen";
+import TripsScreen from "../screens/TripsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import SafetyScreen from "@/screens/SafetyScreen";
 
-const Tab   = createBottomTabNavigator();
+const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 // ─── Tab Icon ─────────────────────────────────────────────────────────────────
@@ -20,24 +21,25 @@ const Stack = createNativeStackNavigator();
 function TabIcon({ label, focused }: { label: string; focused: boolean }) {
   const icons: Record<string, string> = {
     HOME: "◉",
-    AI:   "✦",
+    AI: "✦",
     TRIPS: "≡",
     PROFILE: "◎",
+    SAFETY: "◈",
   };
 
   return (
     <View style={{ alignItems: "center", gap: 2 }}>
       <Text style={{
         fontSize: 16,
-        color:    focused ? C.amber : C.faint,
+        color: focused ? C.amber : C.faint,
       }}>
         {icons[label] ?? "·"}
       </Text>
       <Text style={{
-        fontSize:      9,
-        fontWeight:    "700",
+        fontSize: 9,
+        fontWeight: "700",
         letterSpacing: 1,
-        color:         focused ? C.amber : C.faint,
+        color: focused ? C.amber : C.faint,
       }}>
         {label}
       </Text>
@@ -51,14 +53,14 @@ function AppTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
-        headerShown:   false,
+        headerShown: false,
         tabBarStyle: {
           backgroundColor: "#000",
-          borderTopColor:  C.border,
-          borderTopWidth:  1,
-          height:          72,
-          paddingBottom:   8,
-          paddingTop:      10,
+          borderTopColor: C.border,
+          borderTopWidth: 1,
+          height: 72,
+          paddingBottom: 8,
+          paddingTop: 10,
         },
         tabBarShowLabel: false,
       }}
@@ -66,22 +68,27 @@ function AppTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="HOME"    focused={focused} /> }}
+        options={{ tabBarIcon: ({ focused }) => <TabIcon label="HOME" focused={focused} /> }}
       />
       <Tab.Screen
         name="AI"
         component={AIScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="AI"      focused={focused} /> }}
+        options={{ tabBarIcon: ({ focused }) => <TabIcon label="AI" focused={focused} /> }}
       />
       <Tab.Screen
         name="Trips"
         component={TripsScreen}
-        options={{ tabBarIcon: ({ focused }) => <TabIcon label="TRIPS"   focused={focused} /> }}
+        options={{ tabBarIcon: ({ focused }) => <TabIcon label="TRIPS" focused={focused} /> }}
       />
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}
         options={{ tabBarIcon: ({ focused }) => <TabIcon label="PROFILE" focused={focused} /> }}
+      />
+      <Tab.Screen
+        name="Safety"
+        component={SafetyScreen}
+        options={{ tabBarIcon: ({ focused }) => <TabIcon label="SAFETY" focused={focused} /> }}
       />
     </Tab.Navigator>
   );
@@ -90,21 +97,21 @@ function AppTabs() {
 // ─── Root Navigator ───────────────────────────────────────────────────────────
 
 export function RootNavigator() {
-  const user     = useAuthStore((s) => s.user);
+  const user = useAuthStore((s) => s.user);
   const hydrated = useAuthStore((s) => s.hydrated);
 
   if (!hydrated) {
     return (
       <View style={{
-        flex:            1,
+        flex: 1,
         backgroundColor: C.bg,
-        alignItems:      "center",
-        justifyContent:  "center",
+        alignItems: "center",
+        justifyContent: "center",
       }}>
         <Text style={{
-          color:         C.amber,
-          fontSize:      11,
-          fontWeight:    "700",
+          color: C.amber,
+          fontSize: 11,
+          fontWeight: "700",
           letterSpacing: 4,
         }}>
           FLEET AI
@@ -116,9 +123,9 @@ export function RootNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {!user ? (
-        <Stack.Screen name="Login"   component={LoginScreen} />
+        <Stack.Screen name="Login" component={LoginScreen} />
       ) : (
-        <Stack.Screen name="App"     component={AppTabs} />
+        <Stack.Screen name="App" component={AppTabs} />
       )}
     </Stack.Navigator>
   );

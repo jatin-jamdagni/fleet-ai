@@ -10,6 +10,7 @@ import { useAuthStore } from "../store/auth.store";
 import { useTripStore } from "../store/trip.store";
 import { driverWS } from "../lib/ws";
 import { useGpsTracking } from "../hooks/useGpsTracking";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 import {
   Btn, Card, Badge, SectionLabel, StatRow, Divider, C,
 } from "../components/UI";
@@ -24,6 +25,7 @@ export default function HomeScreen() {
   const isTracking = useTripStore((s) => s.isTracking);
 
   useGpsTracking();
+  usePushNotifications();
 
   // Connect WebSocket on mount
   useEffect(() => {

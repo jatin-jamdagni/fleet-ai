@@ -1,0 +1,21 @@
+services:
+  prometheus:
+    ports:
+      - "9090:9090"
+    networks:
+      - fleet-internal
+      - fleet-public
+
+  grafana:
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-fleet_grafana_2026}
+      GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION: "true"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    networks:
+      - fleet-internal
+      - fleet-public

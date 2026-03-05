@@ -29,8 +29,21 @@ type PingAckMessage = {
   payload: { pingCount?: number };
 };
 
+type NotificationMessage = {
+  type: "NOTIFICATION";
+  payload: {
+    id: string;
+    type: string;
+    title: string;
+    body: string;
+    data?: Record<string, unknown>;
+    createdAt: string;
+  };
+};
+
 export type FleetInboundMessage =
   | ManagerWsMessage
+  | NotificationMessage
   | ConnectedMessage
   | PingMessage
   | ErrorMessage

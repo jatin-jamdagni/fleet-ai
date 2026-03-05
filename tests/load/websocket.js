@@ -74,7 +74,7 @@ export function setup() {
   const selectedVehicle = driverAssignedVehicle || vehicles.find(
     (v) => v.status === "ACTIVE" && !v.assignedDriver
   );
-  const vehicleId = selectedVehicle?.id;
+  let vehicleId = selectedVehicle?.id;
   if (!vehicleId) {
     fail("No ACTIVE vehicle available (already assigned to driver or unassigned) for websocket load test.");
   }
@@ -85,8 +85,27 @@ export function setup() {
       JSON.stringify({ driverId }),
       { headers: authHeaders(managerToken) }
     );
-    if (!check(assignRes, { "assign driver status 200": (r) => r.status === 200 })) {
-      fail(`Driver assign failed. status=${assignRes.status} body=${assignRes.body}`);
+    if (assignRes.status !== 200) {
+      // Idempotent retry path for repeated runs:
+      // if driver is already assigned, reuse that vehicle instead of hard failing.
+      const mineRes = http.get(`${BASE}/api/v1/vehicles/mine`, {
+        headers: authHeaders(driverToken),
+      });
+      if (!check(mineRes, { "driver /vehicles/mine status 200": (r) => r.status === 200 })) {
+        fail(
+          `Driver assign failed. status=${assignRes.status} body=${assignRes.body} | /vehicles/mine status=${mineRes.status} body=${mineRes.body}`
+        );
+      }
+
+      const mineVehicleId = mineRes.json("data.id");
+      const mineVehicleStatus = mineRes.json("data.status");
+      if (mineVehicleId && mineVehicleStatus === "ACTIVE") {
+        vehicleId = mineVehicleId;
+      } else {
+        fail(
+          `Driver assign failed and no ACTIVE assigned vehicle found. assign status=${assignRes.status} body=${assignRes.body} | /vehicles/mine body=${mineRes.body}`
+        );
+      }
     }
   }
 

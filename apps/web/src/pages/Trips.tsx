@@ -1,10 +1,26 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getApiErrorMessage, tripsApi } from "../lib/api";
+import { api, getApiErrorMessage, tripsApi, type TripListItem } from "../lib/api";
 import { Badge, Table } from "../components/ui";
 import toast from "react-hot-toast";
 import { TripStatus } from "@fleet/shared";
 import TripRouteReplay from "../components/map/TripRouteReplay";
+import { useNavigate } from "react-router";
+
+type ShareLinkCreatePayload = {
+  tripId: string;
+  label?: string;
+  expiresIn?: number;
+};
+
+type ShareLinkCreateResponse = {
+  shareUrl: string;
+};
+
+const shareLinkApi = {
+  create: (body: ShareLinkCreatePayload) =>
+    api.post("/share-links", body).then((r) => r.data.data as ShareLinkCreateResponse),
+};
 
 function statusColor(s: TripStatus) {
   return s === TripStatus.ACTIVE
@@ -20,10 +36,10 @@ export default function Trips() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<TripStatus | "">("");
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
-
+  const navigate = useNavigate()
   const { data: tripsRes, isLoading } = useQuery({
     queryKey: ["trips", filter],
-    queryFn:  () => tripsApi.all(filter ? { status: filter } : undefined).then((r) => r.data),
+    queryFn: () => tripsApi.all(filter ? { status: filter } : undefined).then((r) => r.data),
     refetchInterval: 10_000,
   });
 
@@ -36,7 +52,25 @@ export default function Trips() {
     onError: (err: unknown) => toast.error(getApiErrorMessage(err)),
   });
 
-  const trips   = tripsRes?.data ?? [];
+  const shareMut = useMutation({
+    mutationFn: shareLinkApi.create,
+  });
+
+  const handleShare = async (trip: TripListItem) => {
+    try {
+      const data = await shareMut.mutateAsync({
+        tripId: trip.id,
+        label: `${trip.vehicle?.licensePlate ?? "Trip"} — ${new Date(trip.startTime).toLocaleDateString()}`,
+        expiresIn: 168,  // 7 days
+      });
+      await navigator.clipboard.writeText(data.shareUrl);
+      toast.success("Share link copied to clipboard!");
+    } catch (err: unknown) {
+      toast.error(getApiErrorMessage(err));
+    }
+  };
+
+  const trips = (tripsRes?.data ?? []) as TripListItem[];
   const filters: Array<TripStatus | ""> = [
     "",
     TripStatus.ACTIVE,
@@ -62,11 +96,10 @@ export default function Trips() {
               setFilter(f);
               setSelectedTripId(null);
             }}
-            className={`px-5 py-3 text-xs font-mono tracking-widest transition-colors ${
-              filter === f
-                ? "text-amber-400 border-b-2 border-amber-500"
-                : "text-slate-600 hover:text-slate-400"
-            }`}
+            className={`px-5 py-3 text-xs font-mono tracking-widest transition-colors ${filter === f
+              ? "text-amber-400 border-b-2 border-amber-500"
+              : "text-slate-600 hover:text-slate-400"
+              }`}
           >
             {f || "ALL"}
           </button>
@@ -121,6 +154,19 @@ export default function Trips() {
                     {selectedTripId === t.id ? "HIDE REPLAY" : "REPLAY"}
                   </button>
                 ) : null}
+
+                <button
+                  onClick={() => navigate(`/trips/${t.id}/replay`)}
+                  className="text-xs font-mono text-slate-600 hover:text-amber-400 transition-colors"
+                >
+                  REPLAY
+                </button>
+                <button
+                  onClick={() => handleShare(t)}
+                  className="text-xs font-mono text-slate-600 hover:text-amber-400 transition-colors"
+                >
+                  SHARE
+                </button>
               </div>,
             ])}
           />
@@ -129,7 +175,7 @@ export default function Trips() {
 
       {selectedTripId && (
         <div className="border-t border-white/5 p-4">
-          <div className="h-[360px]">
+          <div className="h-90">
             <TripRouteReplay tripId={selectedTripId} />
           </div>
         </div>

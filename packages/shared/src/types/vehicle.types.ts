@@ -12,6 +12,7 @@ export interface Vehicle {
   model: string;
   year: number;
   costPerKm: number;
+  speedLimitKmh?: number | null;
   status: VehicleStatus;
   assignedDriverId: string | null;
   hasManual: boolean;
@@ -25,6 +26,7 @@ export interface CreateVehicleRequest {
   model: string;
   year: number;
   costPerKm: number;
+  speedLimitKmh?: number;
 }
 
 export interface UpdateVehicleRequest {
@@ -34,6 +36,7 @@ export interface UpdateVehicleRequest {
   year?: number;
   costPerKm?: number;
   status?: VehicleStatus;
+  speedLimitKmh?: number;
 }
 
 export interface AssignDriverRequest {
