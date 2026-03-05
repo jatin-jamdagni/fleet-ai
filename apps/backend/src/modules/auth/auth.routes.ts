@@ -6,9 +6,31 @@ import { RegisterBody, LoginBody, RefreshBody } from "./auth.schema";
 import { ok as okRes } from "../../lib/response";
 import { AppError } from "../../lib/errors";
 import { checkRateLimit, AUTH_RATE_LIMIT } from "../../lib/rate-limit";
+import { Prisma } from "../../generated/prisma/client";
 
 const REGISTER_RATE_LIMIT = { ...AUTH_RATE_LIMIT, keyPrefix: "auth-register" };
 const LOGIN_RATE_LIMIT = { ...AUTH_RATE_LIMIT, max: 5, keyPrefix: "auth-login" };
+
+function isDbUnavailableError(error: unknown): boolean {
+  if (
+    error instanceof Prisma.PrismaClientInitializationError ||
+    error instanceof Prisma.PrismaClientRustPanicError
+  ) {
+    return true;
+  }
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === "P1001" || error.code === "P1002" || error.code === "ECONNREFUSED";
+  }
+
+  if (error instanceof Error) {
+    return /ECONNREFUSED|Can't reach database server|timed out|P1001|P1002/i.test(
+      error.message
+    );
+  }
+
+  return false;
+}
 
 export const accessJwtPlugin = jwt({
   name: "accessJwt",
@@ -58,6 +80,18 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
             error: { code: e.code, message: e.message, statusCode: e.statusCode },
           };
         }
+        console.error("[Auth.register] Unexpected error:", e);
+        if (isDbUnavailableError(e)) {
+          set.status = 503;
+          return {
+            success: false,
+            error: {
+              code: "DATABASE_UNAVAILABLE",
+              message: "Database connection failed. Please try again.",
+              statusCode: 503,
+            },
+          };
+        }
         set.status = 500;
         return {
           success: false,
@@ -99,6 +133,18 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
           return {
             success: false,
             error: { code: e.code, message: e.message, statusCode: e.statusCode },
+          };
+        }
+        console.error("[Auth.login] Unexpected error:", e);
+        if (isDbUnavailableError(e)) {
+          set.status = 503;
+          return {
+            success: false,
+            error: {
+              code: "DATABASE_UNAVAILABLE",
+              message: "Database connection failed. Please try again.",
+              statusCode: 503,
+            },
           };
         }
         set.status = 500;
@@ -211,6 +257,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
             error: { code: e.code, message: e.message, statusCode: e.statusCode },
           };
         }
+        console.error("[Auth.me] Unexpected error:", e);
         set.status = 500;
         return {
           success: false,

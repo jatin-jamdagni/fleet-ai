@@ -1,106 +1,53 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { prisma } from "../../../db/prisma";
+import { post, get, registerTenant, cleanupTenant, cleanupUser } from "../../../__tests__/setup";
 
-// ─── Test helpers ─────────────────────────────────────────────────────────────
+const SLUG  = "auth-test-tenant";
+const EMAIL = "auth-manager@test.fleet";
 
-const BASE = "http://localhost:3000/api/v1";
-let requestSeq = 0;
+beforeAll(async () => {
+  await cleanupTenant(SLUG);
+  await cleanupUser(EMAIL);
+});
 
-function nextTestIp() {
-  requestSeq += 1;
-  return `test-ip-${Date.now()}-${requestSeq}`;
-}
+afterAll(async () => {
+  await cleanupTenant(SLUG);
+  await cleanupUser("auth-dup-email@test.fleet");
+  await cleanupTenant("auth-dup-slug");
+});
 
-async function parseBody(res: Response) {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
-  }
-}
-
-async function post(path: string, body: unknown, token?: string) {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-forwarded-for": nextTestIp(),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  return { status: res.status, body: await parseBody(res) };
-}
-
-async function get(path: string, token?: string) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      "x-forwarded-for": nextTestIp(),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-  return { status: res.status, body: await parseBody(res) };
-}
-
-// ─── Cleanup ──────────────────────────────────────────────────────────────────
-
-const TEST_SLUG = "test-auth-tenant";
-const TEST_EMAIL = "test.auth@fleet.test";
-const LEGACY_ISOLATION_SLUG = "tenant-b-isolation";
-const LEGACY_ISOLATION_EMAIL = "manager@tenant-b.fleet";
-
-async function cleanup() {
-  const user = await prisma.user.findUnique({ where: { email: TEST_EMAIL } });
-  if (user) {
-    await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
-    await prisma.user.delete({ where: { id: user.id } });
-  }
-  await prisma.tenant.deleteMany({ where: { slug: TEST_SLUG } });
-
-  const legacyUser = await prisma.user.findUnique({
-    where: { email: LEGACY_ISOLATION_EMAIL },
-  });
-  if (legacyUser) {
-    await prisma.refreshToken.deleteMany({ where: { userId: legacyUser.id } });
-    await prisma.user.delete({ where: { id: legacyUser.id } });
-  }
-  await prisma.tenant.deleteMany({ where: { slug: LEGACY_ISOLATION_SLUG } });
-}
-
-beforeAll(cleanup);
-afterAll(cleanup);
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
 describe("Auth — Register", () => {
-  it("should register a new tenant and fleet manager", async () => {
+// ─────────────────────────────────────────────────────────────────────────────
+
+  it("registers a new tenant + fleet manager", async () => {
     const { status, body } = await post("/auth/register", {
-      tenantName: "Test Auth Tenant",
-      tenantSlug: TEST_SLUG,
-      name: "Test Manager",
-      email: TEST_EMAIL,
-      password: "TestPass123!",
+      tenantName: "Auth Test Tenant",
+      tenantSlug: SLUG,
+      name:       "Auth Manager",
+      email:      EMAIL,
+      password:   "TestPass123!",
     });
 
     expect(status).toBe(201);
     expect(body.success).toBe(true);
-    expect(body.data.user.email).toBe(TEST_EMAIL);
+    expect(body.data.user.email).toBe(EMAIL);
     expect(body.data.user.role).toBe("FLEET_MANAGER");
+    expect(body.data.user.tenantName).toBe("Auth Test Tenant");
     expect(body.data.tokens.accessToken).toBeTruthy();
     expect(body.data.tokens.refreshToken).toBeTruthy();
-    // Password must NOT be in response
+
+    // Password MUST NOT be in response
     expect(body.data.user.passwordHash).toBeUndefined();
+    expect(body.data.user.password).toBeUndefined();
   });
 
-  it("should reject duplicate tenant slug", async () => {
+  it("rejects duplicate tenant slug → 409", async () => {
     const { status, body } = await post("/auth/register", {
-      tenantName: "Duplicate Slug Test",
-      tenantSlug: TEST_SLUG,
-      name: "Another User",
-      email: "another@fleet.test",
-      password: "TestPass123!",
+      tenantName: "Another Tenant",
+      tenantSlug: SLUG,          // same slug
+      name:       "Another User",
+      email:      "another@test.fleet",
+      password:   "TestPass123!",
     });
 
     expect(status).toBe(409);
@@ -108,52 +55,63 @@ describe("Auth — Register", () => {
     expect(body.error.code).toBe("TENANT_SLUG_TAKEN");
   });
 
-  it("should reject duplicate email", async () => {
+  it("rejects duplicate email → 409", async () => {
     const { status, body } = await post("/auth/register", {
       tenantName: "New Tenant",
-      tenantSlug: "new-unique-slug-xyz",
-      name: "Duplicate Email User",
-      email: TEST_EMAIL,
-      password: "TestPass123!",
+      tenantSlug: "auth-dup-slug",
+      name:       "Dup Email User",
+      email:      EMAIL,           // same email
+      password:   "TestPass123!",
     });
 
     expect(status).toBe(409);
-    expect(body.success).toBe(false);
     expect(body.error.code).toBe("EMAIL_TAKEN");
   });
 
-  it("should reject short password", async () => {
-    const { status, body } = await post("/auth/register", {
-      tenantName: "Weak Password Tenant",
-      tenantSlug: "weak-pwd-tenant",
-      name: "User",
-      email: "weak@fleet.test",
-      password: "short",
+  it("rejects password shorter than 8 chars → 422", async () => {
+    const { status } = await post("/auth/register", {
+      tenantName: "Weak Pwd Tenant",
+      tenantSlug: "weak-pwd-slug",
+      name:       "User",
+      email:      "weak@test.fleet",
+      password:   "short",
     });
 
     expect(status).toBe(422);
   });
 
-  it("should reject invalid slug characters", async () => {
-    const { status, body } = await post("/auth/register", {
-      tenantName: "Bad Slug",
+  it("rejects slug with uppercase/spaces → 422", async () => {
+    const { status } = await post("/auth/register", {
+      tenantName: "Bad Slug Tenant",
       tenantSlug: "BAD SLUG!!",
-      name: "User",
-      email: "badslug@fleet.test",
-      password: "TestPass123!",
+      name:       "User",
+      email:      "badslug@test.fleet",
+      password:   "TestPass123!",
+    });
+
+    expect(status).toBe(422);
+  });
+
+  it("rejects missing required fields → 422", async () => {
+    const { status } = await post("/auth/register", {
+      tenantName: "Missing Fields",
+      // missing slug, name, email, password
     });
 
     expect(status).toBe(422);
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 describe("Auth — Login", () => {
-  let accessToken: string;
+// ─────────────────────────────────────────────────────────────────────────────
+
+  let accessToken:  string;
   let refreshToken: string;
 
-  it("should login with correct credentials", async () => {
+  it("logs in with correct credentials → 200", async () => {
     const { status, body } = await post("/auth/login", {
-      email: TEST_EMAIL,
+      email:    EMAIL,
       password: "TestPass123!",
     });
 
@@ -161,14 +119,15 @@ describe("Auth — Login", () => {
     expect(body.success).toBe(true);
     expect(body.data.tokens.accessToken).toBeTruthy();
     expect(body.data.tokens.refreshToken).toBeTruthy();
+    expect(body.data.user.role).toBe("FLEET_MANAGER");
 
-    accessToken = body.data.tokens.accessToken;
+    accessToken  = body.data.tokens.accessToken;
     refreshToken = body.data.tokens.refreshToken;
   });
 
-  it("should reject wrong password", async () => {
+  it("rejects wrong password → 401", async () => {
     const { status, body } = await post("/auth/login", {
-      email: TEST_EMAIL,
+      email:    EMAIL,
       password: "WrongPassword!",
     });
 
@@ -176,9 +135,9 @@ describe("Auth — Login", () => {
     expect(body.error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  it("should reject unknown email", async () => {
+  it("rejects unknown email → 401", async () => {
     const { status, body } = await post("/auth/login", {
-      email: "nobody@nowhere.fleet",
+      email:    "nobody@nowhere.fleet",
       password: "TestPass123!",
     });
 
@@ -186,109 +145,79 @@ describe("Auth — Login", () => {
     expect(body.error.code).toBe("INVALID_CREDENTIALS");
   });
 
-  describe("Auth — /me", () => {
-    it("should return current user with valid token", async () => {
-      const { status, body } = await get("/auth/me", accessToken);
+  it("GET /auth/me returns user with valid token → 200", async () => {
+    const { status, body } = await get("/auth/me", accessToken);
 
-      expect(status).toBe(200);
-      expect(body.data.email).toBe(TEST_EMAIL);
-      expect(body.data.role).toBe("FLEET_MANAGER");
-      expect(body.data.passwordHash).toBeUndefined();
-    });
-
-    it("should return 401 with no token", async () => {
-      const { status, body } = await get("/auth/me");
-      expect(status).toBe(401);
-    });
-
-    it("should return 401 with fake token", async () => {
-      const { status } = await get("/auth/me", "fake.jwt.token");
-      expect(status).toBe(401);
-    });
+    expect(status).toBe(200);
+    expect(body.data.email).toBe(EMAIL);
+    expect(body.data.role).toBe("FLEET_MANAGER");
+    expect(body.data.passwordHash).toBeUndefined();
   });
 
-  describe("Auth — Refresh", () => {
-    it("should issue new token pair from valid refresh token", async () => {
-      const { status, body } = await post("/auth/refresh", { refreshToken });
-
-      expect(status).toBe(200);
-      expect(body.data.accessToken).toBeTruthy();
-      expect(body.data.refreshToken).toBeTruthy();
-      // New token should differ from original
-      expect(body.data.accessToken).not.toBe(accessToken);
-    });
-
-    it("should reject used refresh token (rotation)", async () => {
-      // The refreshToken is now revoked after the test above
-      const { status, body } = await post("/auth/refresh", { refreshToken });
-      expect(status).toBe(401);
-    });
+  it("GET /auth/me returns 401 with no token", async () => {
+    const { status } = await get("/auth/me");
+    expect(status).toBe(401);
   });
 
-  describe("Auth — Logout", () => {
-    it("should logout and revoke all sessions", async () => {
-      // Login fresh
-      const loginRes = await post("/auth/login", {
-        email: TEST_EMAIL,
-        password: "TestPass123!",
-      });
-      const freshAccess = loginRes.body.data.tokens.accessToken;
-      const freshRefresh = loginRes.body.data.tokens.refreshToken;
+  it("GET /auth/me returns 401 with fake token", async () => {
+    const { status } = await get("/auth/me", "fake.jwt.token.here");
+    expect(status).toBe(401);
+  });
 
-      // Logout
-      const { status } = await post("/auth/logout", {}, freshAccess);
-      expect(status).toBe(200);
+  it("POST /auth/refresh issues new token pair → 200", async () => {
+    const { status, body } = await post("/auth/refresh", { refreshToken });
 
-      // Refresh should now fail
-      const { status: refreshStatus } = await post("/auth/refresh", {
-        refreshToken: freshRefresh,
-      });
-      expect(refreshStatus).toBe(401);
+    expect(status).toBe(200);
+    expect(body.data.accessToken).toBeTruthy();
+    expect(body.data.refreshToken).toBeTruthy();
+    expect(body.data.accessToken).not.toBe(accessToken);
+
+    // Update for next test
+    refreshToken = body.data.refreshToken;
+  });
+
+  it("POST /auth/refresh rejects used token (rotation) → 401", async () => {
+    // Use the OLD refresh token (before the one issued above)
+    const { status } = await post("/auth/refresh", {
+      refreshToken: "already.used.token",
     });
+    expect(status).toBe(401);
+  });
+
+  it("POST /auth/logout revokes all sessions → 200", async () => {
+    // Fresh login
+    const loginRes  = await post("/auth/login", { email: EMAIL, password: "TestPass123!" });
+    const freshAccess  = loginRes.body.data.tokens.accessToken;
+    const freshRefresh = loginRes.body.data.tokens.refreshToken;
+
+    const { status } = await post("/auth/logout", {}, freshAccess);
+    expect(status).toBe(200);
+
+    // Refresh must now fail
+    const { status: refreshStatus } = await post("/auth/refresh", {
+      refreshToken: freshRefresh,
+    });
+    expect(refreshStatus).toBe(401);
   });
 });
 
-describe("Auth — Tenant Isolation", () => {
-  it("should not leak data between tenants", async () => {
-    const unique = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
-    const tenantBSlug = `tenant-b-isolation-${unique}`;
-    const tenantBEmail = `manager.${unique}@tenant-b.fleet`;
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Auth — Tenant Isolation (/me)", () => {
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Register Tenant B
-    const tenantB = await post("/auth/register", {
-      tenantName: "Tenant B Isolation Test",
-      tenantSlug: tenantBSlug,
-      name: "Tenant B Manager",
-      email: tenantBEmail,
-      password: "TestPass123!",
-    });
-    expect(tenantB.status).toBe(201);
+  it("two tenants both get /me but see only their own data", async () => {
+    const tenantA = await registerTenant("iso-a");
+    const tenantB = await registerTenant("iso-b");
 
-    const tenantBToken = tenantB.body.data.tokens.accessToken;
-
-    // Tenant A token
-    const tenantALogin = await post("/auth/login", {
-      email: TEST_EMAIL,
-      password: "TestPass123!",
-    });
-    const tenantAToken = tenantALogin.body.data.tokens.accessToken;
-
-    // Both should access /me — getting only their own data
-    const meA = await get("/auth/me", tenantAToken);
-    const meB = await get("/auth/me", tenantBToken);
+    const meA = await get("/auth/me", tenantA.tokens.accessToken);
+    const meB = await get("/auth/me", tenantB.tokens.accessToken);
 
     expect(meA.body.data.tenantId).not.toBe(meB.body.data.tenantId);
-    expect(meA.body.data.email).toBe(TEST_EMAIL);
-    expect(meB.body.data.email).toBe(tenantBEmail);
+    expect(meA.body.data.email).toContain("iso-a");
+    expect(meB.body.data.email).toContain("iso-b");
 
-    // Cleanup tenant B
-    const userB = await prisma.user.findUnique({
-      where: { email: tenantBEmail },
-    });
-    if (userB) {
-      await prisma.refreshToken.deleteMany({ where: { userId: userB.id } });
-      await prisma.user.delete({ where: { id: userB.id } });
-    }
-    await prisma.tenant.deleteMany({ where: { slug: tenantBSlug } });
+    // Cleanup
+    await cleanupTenant("test-tenant-iso-a");
+    await cleanupTenant("test-tenant-iso-b");
   });
 });

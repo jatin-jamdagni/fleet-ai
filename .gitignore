@@ -36,3 +36,15 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+
+
+
+# Production secrets — NEVER commit these
+.env.production
+.env*.local
+*.pem
+*.key
+backups/
+certbot-conf/
+certbot-www/

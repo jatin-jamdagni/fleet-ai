@@ -6,6 +6,17 @@ import { prisma } from "../db/prisma";
 export function setupTenantIsolation() {
 
   // view in db/prisma.ts for implementation details
+  // You do not need to manually register Prisma tenant middleware here.
+
+  // Current behavior:
+
+  // In prisma.ts, tenant isolation is attached when prisma is created via basePrisma.$extends(...).
+  // So any import of prisma already uses that extension automatically.
+  // About setupTenantIsolation():
+
+  // In tenant.middleware.ts, it is currently a no-op/log wrapper for backward compatibility.
+  // Calling it is optional for functionality.
+
   console.log("✅ Tenant isolation enabled via Prisma query extensions");
 }
 

@@ -20,7 +20,7 @@ export const authMiddleware = new Elysia({ name: "auth-middleware" })
     })
   )
   .use(bearer())
-  .derive({ as: "scoped" }, async ({ bearer: token, accessJwt, set, request }) => {
+  .derive({ as: "global" }, async ({ bearer: token, accessJwt, set, request }) => {
     if (!token) {
       set.status = 401;
       return { user: null as unknown as UserContext };
@@ -67,7 +67,19 @@ export function requireRole(...allowedRoles: Role[]) {
   return new Elysia({ name: `require-${allowedRoles.join("|")}` })
     .use(authMiddleware)
     .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
-      if (!user || !allowedRoles.includes(user.role)) {
+      if (!user) {
+        set.status = 401;
+        return {
+          success: false,
+          error: {
+            code: "UNAUTHORIZED",
+            message: "Authentication required",
+            statusCode: 401,
+          },
+        };
+      }
+
+      if (!allowedRoles.includes(user.role)) {
         set.status = 403;
         return {
           success: false,
