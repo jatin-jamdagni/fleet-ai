@@ -130,6 +130,22 @@ class FleetStore {
     );
   }
 
+  sendToUser(userId: string, message: object): boolean {
+    const manager = this.managers.get(userId);
+    if (manager?.ws?.readyState === 1) {
+      manager.ws.send(JSON.stringify(message));
+      return true;
+    }
+
+    const driver = this.drivers.get(userId);
+    if (driver?.ws?.readyState === 1) {
+      driver.ws.send(JSON.stringify(message));
+      return true;
+    }
+
+    return false;
+  }
+
   // ── Pending GPS Pings (batch buffer) ────────────────────────────────────────
 
   addPing(tripId: string, ping: GpsPingPayload) {

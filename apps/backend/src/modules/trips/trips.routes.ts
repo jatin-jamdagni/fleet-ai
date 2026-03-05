@@ -1,5 +1,5 @@
 import Elysia from "elysia";
-import { requireRole, authMiddleware } from "../../middleware/auth.middleware";
+import { requireRole } from "../../middleware/auth.middleware";
 import * as TripService from "./trips.service";
 import { AppError } from "../../lib/errors";
 import { ok as okRes } from "../../lib/response";

@@ -1,9 +1,14 @@
 import { prisma } from "../../db/prisma";
-import { Errors, AppError } from "../../lib/errors";
+ import { Errors, AppError } from "../../lib/errors";
 import { paginate } from "../../lib/response";
 import { injectTenantContext } from "../../middleware/auth.middleware";
 import { broadcastToManagers } from "../websocket/ws.broadcast";
 import type { UserContext } from "../../types/context";
+import { notifyManagers } from "../notifications/notifications.service";
+import { sendInvoiceEmail } from "../email/email.service";
+import { dispatchWebhook } from "../webhooks/webhook.service";
+import { buildInvoiceAmounts } from "./billing.currency";
+
 
 // ─── Calculate trip distance via PostGIS ──────────────────────────────────────
 
@@ -53,10 +58,13 @@ export async function calculateTripDistance(tripId: string): Promise<number> {
 export async function generateInvoice(tripId: string): Promise<void> {
   // Load completed trip with vehicle cost
   const trip = await prisma.trip.findUnique({
-    where:   { id: tripId },
+    where: { id: tripId },
     include: {
       vehicle: {
         select: { id: true, costPerKm: true, licensePlate: true },
+      },
+      driver: {
+        select: { name: true },
       },
     },
   });
@@ -84,38 +92,91 @@ export async function generateInvoice(tripId: string): Promise<void> {
     distanceKm = await calculateTripDistance(tripId);
   }
 
-  const costPerKm    = Number(trip.vehicle.costPerKm);
-  const totalAmount  = Number((distanceKm * costPerKm).toFixed(2));
+  const tripEndTime = trip.endTime ?? new Date();
+  const durationMin = Math.max(
+    0,
+    Math.round((tripEndTime.getTime() - trip.startTime.getTime()) / 60_000)
+  );
+
+  const amounts = await buildInvoiceAmounts(
+    trip.tenantId,
+    Number(distanceKm),
+    durationMin
+  );
+
+  const costPerKm = Number(trip.vehicle.costPerKm);
+  const totalAmount = Number(amounts.totalAmount);
 
   const invoice = await prisma.invoice.create({
     data: {
-      tenantId:    trip.tenantId,
-      tripId:      trip.id,
-      vehicleId:   trip.vehicleId,
-      driverId:    trip.driverId,
+      tenantId: trip.tenantId,
+      tripId: trip.id,
+      vehicleId: trip.vehicleId,
+      driverId: trip.driverId,
       distanceKm,
       costPerKm,
+      subtotal: amounts.subtotal,
+      taxAmount: amounts.taxAmount,
+      taxLabel: amounts.taxLabel,
+      taxRate: amounts.taxRate,
       totalAmount,
-      currency:    "USD",
-      status:      "PENDING",
+      currency: amounts.currency,
+      lineItems: amounts.lineItems as any,
+      status: "PENDING",
       generatedAt: new Date(),
     },
   });
 
+
+  dispatchWebhook(trip.tenantId, "invoice.generated", {
+    invoiceId: invoice.id,
+    tripId: trip.id,
+    vehicleId: trip.vehicleId,
+    totalAmount: Number(invoice.totalAmount).toFixed(2),
+    currency: invoice.currency,
+  }).catch(() => { });
   console.log(
     `[Billing] Invoice ${invoice.id} generated | Trip: ${tripId} | ` +
     `Distance: ${distanceKm.toFixed(3)}km | Amount: $${totalAmount}`
   );
 
+  await notifyManagers({
+    tenantId: trip.tenantId,
+    type: "INVOICE_GENERATED",
+    title: "Invoice Generated",
+    body: `${invoice.currency} ${Number(invoice.totalAmount).toFixed(2)} · ${trip.vehicle.licensePlate}`,
+    data: { invoiceId: invoice.id, amount: totalAmount },
+  });
+
+  // Email invoice to managers
+  const managers = await prisma.user.findMany({
+    where: { tenantId: trip.tenantId, role: { in: ["FLEET_MANAGER"] }, deletedAt: null },
+    select: { email: true, name: true },
+  });
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
+  for (const mgr of managers) {
+    await sendInvoiceEmail({
+      to: mgr.email,
+      managerName: mgr.name,
+      invoiceId: invoice.id,
+      licensePlate: trip.vehicle.licensePlate,
+      driverName: trip.driver?.name ?? "Unknown",
+      distanceKm: distanceKm.toFixed(2),
+      totalAmount: Number(invoice.totalAmount).toFixed(2),
+      currency: invoice.currency,
+      pdfUrl: `${frontendUrl}/invoices`,
+    }).catch(() => { });
+  }
+
   // Notify Fleet Managers via WebSocket
   broadcastToManagers(trip.tenantId, {
-    type:    "INVOICE_GENERATED",
+    type: "INVOICE_GENERATED",
     payload: {
-      invoiceId:   invoice.id,
-      tripId:      trip.id,
+      invoiceId: invoice.id,
+      tripId: trip.id,
       totalAmount,
       distanceKm,
-      currency:    "USD",
+      currency: invoice.currency,
     },
   });
 }
@@ -125,30 +186,30 @@ export async function generateInvoice(tripId: string): Promise<void> {
 export async function listInvoices(
   user: UserContext,
   input: {
-    page?:      number;
-    pageSize?:  number;
-    status?:    string;
+    page?: number;
+    pageSize?: number;
+    status?: string;
     vehicleId?: string;
-    driverId?:  string;
-    from?:      string;
-    to?:        string;
+    driverId?: string;
+    from?: string;
+    to?: string;
   }
 ) {
   return injectTenantContext(user, async () => {
-    const page     = Math.max(1, input.page ?? 1);
+    const page = Math.max(1, input.page ?? 1);
     const pageSize = Math.min(100, input.pageSize ?? 20);
-    const skip     = (page - 1) * pageSize;
+    const skip = (page - 1) * pageSize;
 
     const where: any = { tenantId: user.tenantId };
 
-    if (input.status)    where.status    = input.status;
+    if (input.status) where.status = input.status;
     if (input.vehicleId) where.vehicleId = input.vehicleId;
-    if (input.driverId)  where.driverId  = input.driverId;
+    if (input.driverId) where.driverId = input.driverId;
 
     if (input.from || input.to) {
       where.generatedAt = {};
       if (input.from) where.generatedAt.gte = new Date(input.from);
-      if (input.to)   where.generatedAt.lte = new Date(input.to);
+      if (input.to) where.generatedAt.lte = new Date(input.to);
     }
 
     const [invoices, total] = await Promise.all([
@@ -161,8 +222,8 @@ export async function listInvoices(
           trip: {
             select: {
               startTime: true,
-              endTime:   true,
-              status:    true,
+              endTime: true,
+              status: true,
             },
           },
           vehicle: {
@@ -187,7 +248,7 @@ export async function getInvoice(user: UserContext, invoiceId: string) {
         trip: {
           include: {
             gpsPings: {
-              select:  { lat: true, lng: true, speed: true, timestamp: true },
+              select: { lat: true, lng: true, speed: true, timestamp: true },
               orderBy: { timestamp: "asc" },
             },
           },
@@ -222,8 +283,14 @@ export async function updateInvoiceStatus(
     }
 
     if (invoice.status === "PAID" && status === "PAID") {
+      dispatchWebhook(user.tenantId, "invoice.paid", {
+        invoiceId: invoice.id,
+        totalAmount: Number(invoice.totalAmount).toFixed(2),
+        paidAt: new Date().toISOString(),
+      }).catch(() => { });
       throw new AppError("INVOICE_ALREADY_PAID", "Invoice is already paid", 409);
     }
+
 
     const updated = await prisma.invoice.update({
       where: { id: invoiceId },
@@ -244,7 +311,7 @@ export async function updateInvoiceStatus(
 
 export async function getBillingSummary(user: UserContext) {
   return injectTenantContext(user, async () => {
-    const now       = new Date();
+    const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [
@@ -271,8 +338,8 @@ export async function getBillingSummary(user: UserContext) {
       // Revenue this calendar month
       prisma.invoice.aggregate({
         where: {
-          tenantId:    user.tenantId,
-          status:      "PAID",
+          tenantId: user.tenantId,
+          status: "PAID",
           generatedAt: { gte: monthStart },
         },
         _sum: { totalAmount: true },
@@ -280,12 +347,12 @@ export async function getBillingSummary(user: UserContext) {
       // All-time revenue
       prisma.invoice.aggregate({
         where: { tenantId: user.tenantId, status: "PAID" },
-        _sum:  { totalAmount: true },
+        _sum: { totalAmount: true },
       }),
       // Average trip distance
       prisma.invoice.aggregate({
         where: { tenantId: user.tenantId },
-        _avg:  { distanceKm: true },
+        _avg: { distanceKm: true },
       }),
     ]);
 
@@ -295,8 +362,8 @@ export async function getBillingSummary(user: UserContext) {
       paidCount,
       voidCount,
       monthlyRevenue: Number(monthlyRevenue._sum.totalAmount ?? 0),
-      totalRevenue:   Number(totalRevenue._sum.totalAmount ?? 0),
-      avgDistanceKm:  Number((avgDistance._avg.distanceKm ?? 0)).toFixed(2),
+      totalRevenue: Number(totalRevenue._sum.totalAmount ?? 0),
+      avgDistanceKm: Number((avgDistance._avg.distanceKm ?? 0)).toFixed(2),
     };
   });
 }

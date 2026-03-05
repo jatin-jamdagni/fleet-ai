@@ -10,6 +10,14 @@ import { Role } from "@fleet/shared";
 import { generateInvoice } from "../billing/billing.service";
 import { onTripEnded, onTripStarted } from "../gps/gps.batch";
 import { tripsEndedTotal, tripsStartedTotal } from "../../lib/metrics";
+import { notifyManagers, createNotification } from "../notifications/notifications.service";
+import { sendTripSummaryEmail } from "../email/email.service";
+import { computeDriverScore } from "../safety/safety.scoring";
+import { logHosDriving } from "../safety/safety.hos";
+import { updateOdometer } from "../maintenance/maintenance.service";
+import { dispatchWebhook } from "../webhooks/webhook.service";
+import { geocodeTrip } from "../integrations/geocode.service";
+
 
 // ─── Start Trip ───────────────────────────────────────────────────────────────
 
@@ -92,6 +100,14 @@ export async function startTrip(user: UserContext, vehicleId: string) {
                 data: { status: "IN_TRIP" },
             }),
         ]);
+
+        dispatchWebhook(trip.tenantId, "trip.started", {
+            tripId: trip.id,
+            vehicleId: trip.vehicleId,
+            driverId: trip.driverId,
+            startTime: trip.startTime,
+        }).catch(() => { });
+
 
         onTripStarted();
         tripsStartedTotal.inc();
@@ -212,6 +228,71 @@ export async function endTrip(
             console.error("[Trip] Invoice generation failed:", err);
         });
 
+        const addresses = await geocodeTrip(trip.id).catch(() => ({
+            startAddress: null, endAddress: null,
+        }));
+
+        const durationMin = Math.round(
+            (endTime.getTime() - trip.startTime.getTime()) / 60_000
+        );
+
+        const invoice = await prisma.invoice.findUnique({
+            where: { tripId: trip.id },
+            select: { id: true, totalAmount: true },
+        }).catch(() => null);
+
+        dispatchWebhook(trip.tenantId, "trip.ended", {
+            tripId: trip.id,
+            vehicleId: trip.vehicleId,
+            driverId: trip.driverId,
+            distanceKm: Number(distanceKm).toFixed(3),
+            durationMin,
+            startTime: trip.startTime,
+            endTime,
+            startAddress: addresses.startAddress,
+            endAddress: addresses.endAddress,
+            invoiceId: invoice?.id,
+            invoiceAmount: invoice ? Number(invoice.totalAmount).toFixed(2) : null,
+        }).catch(() => { });
+
+        const drivingMin = durationMin;
+
+        // Fire all safety computations concurrently (non-blocking)
+        Promise.all([
+            updateOdometer(trip.vehicleId, Number(distanceKm)),
+            logHosDriving(trip.tenantId, trip.driverId!, trip.id, drivingMin),
+            computeDriverScore(trip.tenantId, trip.driverId!),
+        ]).catch((err) =>
+            console.error("[Safety] Post-trip processing failed:", err)
+        );
+
+
+        await notifyManagers({
+            tenantId: trip.tenantId,
+            type: "TRIP_ENDED",
+            title: "Trip Completed",
+            body: `${updatedTrip.vehicle.licensePlate} · ${Number(distanceKm).toFixed(2)} km`,
+            data: { tripId: trip.id, vehicleId: trip.vehicleId },
+        });
+
+        // Email summary to managers
+        const managers = await prisma.user.findMany({
+            where: { tenantId: trip.tenantId, role: { in: ["FLEET_MANAGER"] }, deletedAt: null },
+            select: { email: true, name: true },
+        });
+        for (const mgr of managers) {
+            await sendTripSummaryEmail({
+                to: mgr.email,
+                managerName: mgr.name,
+                licensePlate: updatedTrip.vehicle.licensePlate,
+                driverName: updatedTrip.driver?.name ?? "Unknown",
+                distanceKm: Number(distanceKm).toFixed(2),
+                durationMin: Math.round((endTime.getTime() - trip.startTime.getTime()) / 60_000),
+                startTime: trip.startTime,
+                endTime,
+                totalAmount: "—",
+            }).catch(() => { });
+        }
         return { ...updatedTrip, pingsFlushed };
 
 

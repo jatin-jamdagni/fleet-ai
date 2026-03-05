@@ -1,5 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
+import cron from "node-cron";
+
 import { swagger } from "@elysiajs/swagger";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { prisma } from "./db/prisma";
@@ -14,12 +16,31 @@ import { wsHandler } from "./modules/websocket/ws.handler";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes";
 import { gpsRoutes } from "./modules/gps/gps.routes";
 import { checkRedisHealth } from "./lib/rate-limit";
-const PORT = Number(process.env.PORT) || 3000;
 import { initSentry, captureException } from "./lib/sentry";
 import { AppError } from "./lib/errors";
 import { register } from "./lib/metrics";
+import { saasRoutes, stripeWebhookRoute } from "./modules/saas/saas.routes";
+import { notificationRoutes } from "./modules/notifications/notifications.routes";
+import { safetyRoutes } from "./modules/safety/safety.routes";
+import { checkExpiringDocuments } from "./modules/maintenance/document.service";
+import { sendScheduleReminders } from "./modules/schedule/schedule.service";
+import { maintenanceRoutes } from "./middleware/maintenance.routes";
+import { settingsRoutes } from "./modules/portal/portal.routes";
+import { shareLinkRoutes } from "./modules/portal/portal.routes";
+import { apiKeyRoutes } from "./modules/apikeys/apikeys.routes";
+import { publicApiRoutes } from "./modules/apikeys/public.api.routes";
+import { webhookRoutes } from "./modules/webhooks/webhook.routes";
+import { fuelRoutes } from "./modules/fuel/fuel.routes";
+import { integrationRoutes } from "./modules/integrations/integrations.routes";
+import { countryRoutes } from "./modules/auth/auth.country.routes";
+import { tripLogisticsRoutes } from "./modules/trips/trips.logistics.routes";
+import { getRateCard, updateRateCard } from "./modules/billing/ratecard.service";
+import { ok as okRes }      from "./lib/response";
+
 
 // ─── Sentry ─────────────────────────────────────────────────────────────
+
+const PORT = Number(process.env.PORT) || 3000;
 
 initSentry();
 
@@ -82,26 +103,10 @@ const app = new Elysia()
   )
   .use(wsHandler)
   .use(aiHealthRoutes)
+  .use(stripeWebhookRoute)
 
-  // ─── Health ────────────────────────────────────────────────────────────────
-  // .get("/health", async () => {
-  //   // Also verify DB connection
-  //   let dbStatus = "ok";
-  //   try {
-  //     await prisma.$queryRaw`SELECT 1`;
-  //   } catch {
-  //     dbStatus = "error";
-  //   }
 
-  //   return {
-  //     status: dbStatus === "ok" ? "ok" : "degraded",
-  //     service: "fleet-ai-backend",
-  //     timestamp: new Date().toISOString(),
-  //     version: "1.0.0",
-  //     environment: process.env.NODE_ENV ?? "development",
-  //     database: dbStatus,
-  //   };
-  // })
+
   .get("/health", async () => {
     const start = Date.now();
 
@@ -114,7 +119,7 @@ const app = new Elysia()
       dbMs = Date.now() - start;
     } catch { /* noop */ }
 
-    // Redis ping
+
     const redis = await checkRedisHealth();
 
     const healthy = dbOk;
@@ -150,6 +155,9 @@ const app = new Elysia()
     set.headers["Content-Type"] = register.contentType;
     return register.metrics();
   })
+
+  .use(publicApiRoutes)
+  .use(countryRoutes)
   // ─── API v1 ────────────────────────────────────────────────────────────────
   .group("/api/v1", (app) =>
     app
@@ -167,6 +175,24 @@ const app = new Elysia()
       .use(aiManagerRoutes)
       .use(analyticsRoutes)
       .use(gpsRoutes)
+      .use(notificationRoutes)
+      .use(safetyRoutes)
+      .use(maintenanceRoutes)
+      .use(settingsRoutes)
+      .use(shareLinkRoutes)
+      .use(apiKeyRoutes)
+      .use(webhookRoutes)
+      .use(fuelRoutes)
+      .use(integrationRoutes)
+      .use(tripLogisticsRoutes)
+      .use(saasRoutes)
+
+      .get("/rate-card", async ({ user }) =>
+        okRes(await getRateCard(user))
+      )
+      .patch("/rate-card", async ({ user, body }) =>
+        okRes(await updateRateCard(user, body as any))
+      )
 
 
   )
@@ -248,6 +274,17 @@ const app = new Elysia()
   })
 
   .listen(PORT);
+
+// ─── Cron Jobs ────────────────────────────────────────────────────────────────
+cron.schedule("*/15 * * * *", async () => {
+  await sendScheduleReminders().catch(console.error);
+});
+console.log("⏰ Schedule reminder cron started");
+
+cron.schedule("0 8 * * *", async () => {
+  await checkExpiringDocuments().catch(console.error);
+});
+console.log("⏰ Document expiry cron started");
 
 const shutdown = async (signal: string) => {
   console.log(`[Shutdown] ${signal} received. Flushing pending GPS pings...`);

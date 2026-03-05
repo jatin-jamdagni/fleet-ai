@@ -2,6 +2,9 @@ import { prisma } from "../../db/prisma";
 import { Errors, AppError } from "../../lib/errors";
 import { Role, Plan, JWT_ACCESS_EXPIRY, JWT_REFRESH_EXPIRY } from "@fleet/shared";
 import type { LoginResponse } from "@fleet/shared";
+import { startTrial } from "../saas/saas.service";
+import { sendWelcomeEmail } from "../email/email.service";
+import { verifyInviteToken } from "../users/invite-token";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -118,8 +121,19 @@ export async function register(
       },
     });
 
+    const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
+    await sendWelcomeEmail({
+      to: input.email,
+      name: input.name,
+      tenantName: input.tenantName,
+      loginUrl: frontendUrl,
+    }).catch(() => { });
+
     return [newTenant, newUser];
   });
+
+  // Seed subscription state on fresh tenant signup.
+  await startTrial(tenant.id);
 
   const tokens = await signTokenPair(
     { userId: user.id, tenantId: tenant.id, role: user.role, email: user.email },
@@ -135,6 +149,70 @@ export async function register(
       role: user.role,
       tenantId: tenant.id,
       tenantName: tenant.name,
+    },
+    tokens,
+  };
+}
+
+// ─── Accept Invite ───────────────────────────────────────────────────────────
+
+export async function acceptInvite(
+  input: { token: string; password: string; name?: string },
+  accessJwt: JwtSigner,
+  refreshJwt: JwtSigner
+): Promise<LoginResponse> {
+  const payload = await verifyInviteToken(input.token);
+  if (!payload) {
+    throw new AppError("INVITE_INVALID", "Invite link is invalid or expired", 400);
+  }
+
+  if (input.password.length < 8) {
+    throw new AppError("WEAK_PASSWORD", "Password must be at least 8 characters", 422);
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email: payload.email },
+    include: { tenant: true },
+  });
+
+  if (!user || user.deletedAt || user.tenantId !== payload.tenantId) {
+    throw new AppError("INVITE_INVALID", "Invite link is no longer valid", 400);
+  }
+
+  const passwordHash = await Bun.password.hash(input.password, {
+    algorithm: "bcrypt",
+    cost: 12,
+  });
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash,
+      lastLoginAt: new Date(),
+      ...(input.name ? { name: input.name } : {}),
+    },
+    include: { tenant: true },
+  });
+
+  const tokens = await signTokenPair(
+    {
+      userId: updated.id,
+      tenantId: updated.tenantId,
+      role: updated.role,
+      email: updated.email,
+    },
+    accessJwt,
+    refreshJwt
+  );
+
+  return {
+    user: {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      role: updated.role,
+      tenantId: updated.tenantId,
+      tenantName: updated.tenant.name,
     },
     tokens,
   };

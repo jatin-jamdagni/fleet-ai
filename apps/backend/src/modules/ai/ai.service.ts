@@ -7,30 +7,36 @@ import { searchManualChunks, vehicleHasManual, buildRAGPrompt } from "./ai.searc
 import { ingestVehicleManual, deleteVehicleManual } from "./ai.ingest";
 import type { UserContext } from "../../types/context";
 import { Role } from "@fleet/shared";
+import { enforceLimit, incrementUsage } from "../saas/saas.usage";
 
 // ─── Ask Question — Full RAG Pipeline ────────────────────────────────────────
 
 export async function* askQuestion(
-  user:     UserContext,
+  user: UserContext,
   question: string,
   vehicleId: string
 ): AsyncGenerator<string, void, unknown> {
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
+  await enforceLimit(user.tenantId, (tenant?.plan ?? "TRIAL") as any, "ai_query");
+
+
   const startTime = Date.now();
-  const ai        = getAILink();
+  const ai = getAILink();
 
   // 1. Verify driver is assigned to this vehicle
   const vehicle = await prisma.vehicle.findFirst({
     where: {
-      id:        vehicleId,
-      tenantId:  user.tenantId,
+      id: vehicleId,
+      tenantId: user.tenantId,
       deletedAt: null,
     },
     select: {
-      id:              true,
-      make:            true,
-      model:           true,
-      year:            true,
-      hasManual:       true,
+      id: true,
+      make: true,
+      model: true,
+      year: true,
+      hasManual: true,
       assignedDriverId: true,
     },
   });
@@ -79,13 +85,13 @@ export async function* askQuestion(
     // Log the failed search
     await prisma.aILog.create({
       data: {
-        tenantId:       user.tenantId,
-        driverId:       user.userId,
+        tenantId: user.tenantId,
+        driverId: user.userId,
         vehicleId,
         question,
         retrievedChunks: [],
-        answer:         "No relevant chunks found",
-        latencyMs:      Date.now() - startTime,
+        answer: "No relevant chunks found",
+        latencyMs: Date.now() - startTime,
       },
     });
 
@@ -94,9 +100,9 @@ export async function* askQuestion(
 
   // 5. Build RAG prompt
   const { system, prompt } = buildRAGPrompt(question, chunks, {
-    make:  vehicle.make,
+    make: vehicle.make,
     model: vehicle.model,
-    year:  vehicle.year,
+    year: vehicle.year,
   });
 
   // 6. Stream answer
@@ -117,17 +123,17 @@ export async function* askQuestion(
 
   prisma.aILog.create({
     data: {
-      tenantId:       user.tenantId,
-      driverId:       user.userId,
+      tenantId: user.tenantId,
+      driverId: user.userId,
       vehicleId,
       question,
       retrievedChunks: chunks.map((c) => ({
-        id:         c.id,
+        id: c.id,
         chunkIndex: c.chunkIndex,
         similarity: c.similarity,
-        preview:    c.content.slice(0, 100),
+        preview: c.content.slice(0, 100),
       })),
-      answer:    fullAnswer,
+      answer: fullAnswer,
       latencyMs,
     },
   }).catch((err) => console.error("[AI] Failed to log interaction:", err));
@@ -140,10 +146,10 @@ export async function* askQuestion(
 // ─── Upload Vehicle Manual ────────────────────────────────────────────────────
 
 export async function uploadManual(
-  user:      UserContext,
+  user: UserContext,
   vehicleId: string,
   pdfBuffer: Buffer,
-  fileName:  string
+  fileName: string
 ) {
   return injectTenantContext(user, async () => {
     // Verify vehicle belongs to tenant
@@ -174,28 +180,28 @@ export async function deleteManual(user: UserContext, vehicleId: string) {
 export async function listAILogs(
   user: UserContext,
   input: {
-    page?:      number;
-    pageSize?:  number;
+    page?: number;
+    pageSize?: number;
     vehicleId?: string;
-    driverId?:  string;
-    from?:      string;
-    to?:        string;
+    driverId?: string;
+    from?: string;
+    to?: string;
   }
 ) {
   return injectTenantContext(user, async () => {
-    const page     = Math.max(1, input.page ?? 1);
+    const page = Math.max(1, input.page ?? 1);
     const pageSize = Math.min(100, input.pageSize ?? 20);
-    const skip     = (page - 1) * pageSize;
+    const skip = (page - 1) * pageSize;
 
     const where: any = { tenantId: user.tenantId };
 
     if (input.vehicleId) where.vehicleId = input.vehicleId;
-    if (input.driverId)  where.driverId  = input.driverId;
+    if (input.driverId) where.driverId = input.driverId;
 
     if (input.from || input.to) {
       where.createdAt = {};
       if (input.from) where.createdAt.gte = new Date(input.from);
-      if (input.to)   where.createdAt.lte = new Date(input.to);
+      if (input.to) where.createdAt.lte = new Date(input.to);
     }
 
     const [logs, total] = await Promise.all([
@@ -205,13 +211,13 @@ export async function listAILogs(
         skip,
         take: pageSize,
         select: {
-          id:             true,
-          vehicleId:      true,
-          driverId:       true,
-          question:       true,
-          answer:         true,
-          latencyMs:      true,
-          createdAt:      true,
+          id: true,
+          vehicleId: true,
+          driverId: true,
+          question: true,
+          answer: true,
+          latencyMs: true,
+          createdAt: true,
           driver: {
             select: { name: true, email: true },
           },
@@ -227,27 +233,27 @@ export async function listAILogs(
 // ─── AI Health Check ──────────────────────────────────────────────────────────
 
 export async function checkAIHealth() {
-  const ai        = getAILink();
+  const ai = getAILink();
   const available = await ai.isAvailable();
 
   let embedTest = false;
-  let chatTest  = false;
+  let chatTest = false;
 
   if (available) {
     try {
-      const vec  = await ai.embed("test");
-      embedTest  = vec.length > 0;
+      const vec = await ai.embed("test");
+      embedTest = vec.length > 0;
     } catch { /* noop */ }
 
     try {
       const gen = ai.chat("Say OK");
       const { value } = await gen.next();
-      chatTest  = Boolean(value);
+      chatTest = Boolean(value);
     } catch { /* noop */ }
   }
 
   return {
-    provider:  process.env.AI_PROVIDER ?? "ollama",
+    provider: process.env.AI_PROVIDER ?? "ollama",
     available,
     embedTest,
     chatTest,

@@ -6,6 +6,8 @@ export const CreateVehicleBody = t.Object({
   model: t.String({ minLength: 1, maxLength: 50 }),
   year: t.Number({ minimum: 1990, maximum: new Date().getFullYear() + 1 }),
   costPerKm: t.Number({ minimum: 0.01, maximum: 999 }),
+  speedLimitKmh: t.Optional(t.Number({ minimum: 0, maximum: 300 })),
+
 });
 
 export const UpdateVehicleBody = t.Object({
@@ -18,6 +20,8 @@ export const UpdateVehicleBody = t.Object({
     t.Literal("ACTIVE"),
     t.Literal("INACTIVE"),
   ])),
+  speedLimitKmh: t.Optional(t.Number({ minimum: 0, maximum: 300 })),
+
 });
 
 export const AssignDriverBody = t.Object({

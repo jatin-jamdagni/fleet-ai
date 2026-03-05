@@ -10,6 +10,36 @@ import { wsConnectionsGauge, wsConnectionsTotal } from "../../lib/metrics";
 // Heartbeat interval — 10 seconds
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
+type WsAuthData = {
+  userId: string;
+  tenantId: string;
+  role: string;
+  email?: string;
+};
+
+function getWsAuthData(ws: any): WsAuthData | null {
+  const data = ws?.data as Partial<WsAuthData> | undefined;
+  if (!data) return null;
+
+  if (
+    typeof data.userId !== "string" ||
+    typeof data.tenantId !== "string" ||
+    typeof data.role !== "string"
+  ) {
+    return null;
+  }
+
+  return data as WsAuthData;
+}
+
+function closeUnauthorizedSocket(ws: any) {
+  try {
+    ws.close(1008, "Unauthorized");
+  } catch {
+    try { ws.close(); } catch { /* no-op */ }
+  }
+}
+
 export const wsHandler = new Elysia({ prefix: "/ws" })
   .use(
     jwt({
@@ -53,7 +83,25 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
 
     // ── On Open ───────────────────────────────────────────────────────────────
     async open(ws) {
-      const { userId, tenantId, role } = ws.data as any;
+      const auth = getWsAuthData(ws);
+      if (!auth) {
+        console.warn("[WS] Connection rejected: missing auth context");
+        closeUnauthorizedSocket(ws);
+        return;
+      }
+
+      const { userId, tenantId, role } = auth;
+
+      if (
+        role !== Role.DRIVER &&
+        role !== Role.FLEET_MANAGER &&
+        role !== Role.SUPER_ADMIN
+      ) {
+        console.warn(`[WS] Connection rejected: unsupported role "${role}" | User: ${userId}`);
+        closeUnauthorizedSocket(ws);
+        return;
+      }
+
       const roleLabel = role === Role.DRIVER ? "driver" : "manager";
 
       console.log(`[WS] Connection opened | Role: ${role} | User: ${userId}`);
@@ -110,7 +158,14 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
 
     // ── On Message ────────────────────────────────────────────────────────────
     async message(ws, raw) {
-      const { userId, tenantId, role } = ws.data as any;
+      const auth = getWsAuthData(ws);
+      if (!auth) {
+        ws.send(JSON.stringify({ type: "ERROR", payload: { message: "Unauthorized socket" } }));
+        closeUnauthorizedSocket(ws);
+        return;
+      }
+
+      const { userId, tenantId, role } = auth;
 
       let msg: any;
       try {
@@ -230,7 +285,15 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
 
     // ── On Close ──────────────────────────────────────────────────────────────
     async close(ws) {
-      const { userId, tenantId, role } = ws.data as any;
+      const auth = getWsAuthData(ws);
+      if (!auth) {
+        if ((ws as any)._heartbeat) {
+          clearInterval((ws as any)._heartbeat);
+        }
+        return;
+      }
+
+      const { userId, tenantId, role } = auth;
       if (role === Role.DRIVER || role === Role.FLEET_MANAGER || role === Role.SUPER_ADMIN) {
         const roleLabel = role === Role.DRIVER ? "driver" : "manager";
         wsConnectionsGauge.dec({ role: roleLabel });

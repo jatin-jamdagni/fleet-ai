@@ -5,6 +5,8 @@ import { injectTenantContext } from "../../middleware/auth.middleware";
 import type { UserContext } from "../../types/context";
 import type { VehicleStatus } from "@fleet/shared";
 import { Role } from "@fleet/shared";
+import { enforceLimit, incrementUsage } from "../saas/saas.usage";
+import { createNotification } from "../notifications/notifications.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,12 +64,12 @@ function vehicleSelect() {
 
 export async function listVehicles(user: UserContext, input: ListVehiclesInput) {
   return injectTenantContext(user, async () => {
-    const page     = Math.max(1, input.page ?? 1);
+    const page = Math.max(1, input.page ?? 1);
     const pageSize = Math.min(100, input.pageSize ?? 20);
-    const skip     = (page - 1) * pageSize;
+    const skip = (page - 1) * pageSize;
 
     const where: any = {
-      tenantId:  user.tenantId,
+      tenantId: user.tenantId,
       deletedAt: null,
     };
 
@@ -78,8 +80,8 @@ export async function listVehicles(user: UserContext, input: ListVehiclesInput) 
     if (input.search) {
       where.OR = [
         { licensePlate: { contains: input.search, mode: "insensitive" } },
-        { make:         { contains: input.search, mode: "insensitive" } },
-        { model:        { contains: input.search, mode: "insensitive" } },
+        { make: { contains: input.search, mode: "insensitive" } },
+        { model: { contains: input.search, mode: "insensitive" } },
       ];
     }
 
@@ -119,16 +121,16 @@ export async function getVehicle(user: UserContext, vehicleId: string) {
   return injectTenantContext(user, async () => {
     const vehicle = await prisma.vehicle.findFirst({
       where: {
-        id:        vehicleId,
-        tenantId:  user.tenantId,
+        id: vehicleId,
+        tenantId: user.tenantId,
         deletedAt: null,
       },
       select: {
         ...vehicleSelect(),
         trips: {
-          where:   { status: { in: ["ACTIVE", "PENDING"] } },
-          select:  { id: true, status: true, startTime: true },
-          take:    1,
+          where: { status: { in: ["ACTIVE", "PENDING"] } },
+          select: { id: true, status: true, startTime: true },
+          take: 1,
           orderBy: { startTime: "desc" },
         },
         _count: {
@@ -145,13 +147,16 @@ export async function getVehicle(user: UserContext, vehicleId: string) {
 // ─── Create Vehicle ───────────────────────────────────────────────────────────
 
 export async function createVehicle(user: UserContext, input: CreateVehicleInput) {
+  const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
+  await enforceLimit(user.tenantId, (tenant?.plan ?? "TRIAL") as any, "vehicles");
+
   return injectTenantContext(user, async () => {
     // Check license plate uniqueness within tenant
     const existing = await prisma.vehicle.findFirst({
       where: {
         licensePlate: { equals: input.licensePlate, mode: "insensitive" },
-        tenantId:     user.tenantId,
-        deletedAt:    null,
+        tenantId: user.tenantId,
+        deletedAt: null,
       },
     });
 
@@ -161,12 +166,12 @@ export async function createVehicle(user: UserContext, input: CreateVehicleInput
 
     const vehicle = await prisma.vehicle.create({
       data: {
-        tenantId:     user.tenantId,
+        tenantId: user.tenantId,
         licensePlate: input.licensePlate.toUpperCase(),
-        make:         input.make,
-        model:        input.model,
-        year:         input.year,
-        costPerKm:    input.costPerKm,
+        make: input.make,
+        model: input.model,
+        year: input.year,
+        costPerKm: input.costPerKm,
       },
       select: vehicleSelect(),
     });
@@ -204,9 +209,9 @@ export async function updateVehicle(
       const duplicate = await prisma.vehicle.findFirst({
         where: {
           licensePlate: { equals: input.licensePlate, mode: "insensitive" },
-          tenantId:     user.tenantId,
-          deletedAt:    null,
-          id:           { not: vehicleId },
+          tenantId: user.tenantId,
+          deletedAt: null,
+          id: { not: vehicleId },
         },
       });
       if (duplicate) {
@@ -215,11 +220,11 @@ export async function updateVehicle(
     }
 
     const updated = await prisma.vehicle.update({
-      where:  { id: vehicleId },
-      data:   {
+      where: { id: vehicleId },
+      data: {
         ...input,
         licensePlate: input.licensePlate?.toUpperCase(),
-        updatedAt:    new Date(),
+        updatedAt: new Date(),
       },
       select: vehicleSelect(),
     });
@@ -245,8 +250,8 @@ export async function deleteVehicle(user: UserContext, vehicleId: string) {
     await prisma.vehicle.update({
       where: { id: vehicleId },
       data: {
-        deletedAt:       new Date(),
-        status:          "INACTIVE",
+        deletedAt: new Date(),
+        status: "INACTIVE",
         assignedDriverId: null,
       },
     });
@@ -276,8 +281,8 @@ export async function assignDriver(
     // Unassign
     if (driverId === null) {
       const updated = await prisma.vehicle.update({
-        where:  { id: vehicleId },
-        data:   { assignedDriverId: null },
+        where: { id: vehicleId },
+        data: { assignedDriverId: null },
         select: vehicleSelect(),
       });
       return updated;
@@ -286,9 +291,9 @@ export async function assignDriver(
     // Verify driver exists, belongs to this tenant, and has DRIVER role
     const driver = await prisma.user.findFirst({
       where: {
-        id:        driverId,
-        tenantId:  user.tenantId,
-        role:      Role.DRIVER,
+        id: driverId,
+        tenantId: user.tenantId,
+        role: Role.DRIVER,
         deletedAt: null,
       },
     });
@@ -298,9 +303,9 @@ export async function assignDriver(
     const alreadyAssigned = await prisma.vehicle.findFirst({
       where: {
         assignedDriverId: driverId,
-        tenantId:         user.tenantId,
-        deletedAt:        null,
-        id:               { not: vehicleId },
+        tenantId: user.tenantId,
+        deletedAt: null,
+        id: { not: vehicleId },
       },
     });
     if (alreadyAssigned) {
@@ -309,11 +314,22 @@ export async function assignDriver(
       );
     }
 
+
     const updated = await prisma.vehicle.update({
-      where:  { id: vehicleId },
-      data:   { assignedDriverId: driverId },
+      where: { id: vehicleId },
+      data: { assignedDriverId: driverId },
       select: vehicleSelect(),
     });
+    if (driverId) {
+  await createNotification({
+    tenantId: user.tenantId,
+    userId:   driverId,
+    type:     "VEHICLE_ASSIGNED",
+    title:    "Vehicle Assigned",
+    body:     `You have been assigned to ${vehicle.licensePlate}`,
+    data:     { vehicleId: vehicle.id, licensePlate: vehicle.licensePlate },
+  }).catch(() => {});
+}
 
     return updated;
   });

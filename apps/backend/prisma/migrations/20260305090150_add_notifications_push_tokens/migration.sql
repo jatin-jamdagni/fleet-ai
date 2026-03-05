@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "Plan" AS ENUM ('STARTER', 'PROFESSIONAL', 'ENTERPRISE');
+CREATE TYPE "Plan" AS ENUM ('TRIAL', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE');
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('SUPER_ADMIN', 'FLEET_MANAGER', 'DRIVER');
@@ -13,17 +13,41 @@ CREATE TYPE "TripStatus" AS ENUM ('PENDING', 'ACTIVE', 'COMPLETED', 'FORCE_ENDED
 -- CreateEnum
 CREATE TYPE "InvoiceStatus" AS ENUM ('PENDING', 'PAID', 'VOID');
 
+-- CreateEnum
+CREATE TYPE "PlanStatus" AS ENUM ('ACTIVE', 'PAST_DUE', 'CANCELED', 'TRIALING');
+
+-- CreateEnum
+CREATE TYPE "NotificationType" AS ENUM ('TRIP_STARTED', 'TRIP_ENDED', 'TRIP_FORCE_ENDED', 'INVOICE_GENERATED', 'INVOICE_PAID', 'VEHICLE_ASSIGNED', 'DRIVER_INVITED', 'PLAN_LIMIT_WARNING', 'PAYMENT_FAILED', 'SYSTEM');
+
 -- CreateTable
 CREATE TABLE "tenants" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
-    "plan" "Plan" NOT NULL DEFAULT 'STARTER',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
+    "stripeCustomerId" TEXT,
+    "stripeSubscriptionId" TEXT,
+    "plan" "Plan" NOT NULL DEFAULT 'TRIAL',
+    "planStatus" "PlanStatus" NOT NULL DEFAULT 'ACTIVE',
+    "trialEndsAt" TIMESTAMP(3),
+    "currentPeriodEnd" TIMESTAMP(3),
+    "cancelAtPeriodEnd" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "tenants_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "usage_logs" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "metric" TEXT NOT NULL,
+    "count" INTEGER NOT NULL DEFAULT 1,
+    "date" DATE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "usage_logs_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -162,8 +186,48 @@ CREATE TABLE "audit_logs" (
     CONSTRAINT "audit_logs_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "notifications" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "type" "NotificationType" NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "data" JSONB,
+    "read" BOOLEAN NOT NULL DEFAULT false,
+    "readAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "notifications_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "push_tokens" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "platform" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "push_tokens_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "tenants_slug_key" ON "tenants"("slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "tenants_stripeCustomerId_key" ON "tenants"("stripeCustomerId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "tenants_stripeSubscriptionId_key" ON "tenants"("stripeSubscriptionId");
+
+-- CreateIndex
+CREATE INDEX "usage_logs_tenantId_date_idx" ON "usage_logs"("tenantId", "date");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "usage_logs_tenantId_metric_date_key" ON "usage_logs"("tenantId", "metric", "date");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
@@ -258,6 +322,18 @@ CREATE INDEX "audit_logs_userId_idx" ON "audit_logs"("userId");
 -- CreateIndex
 CREATE INDEX "audit_logs_entityType_entityId_idx" ON "audit_logs"("entityType", "entityId");
 
+-- CreateIndex
+CREATE INDEX "notifications_tenantId_userId_read_idx" ON "notifications"("tenantId", "userId", "read");
+
+-- CreateIndex
+CREATE INDEX "notifications_tenantId_createdAt_idx" ON "notifications"("tenantId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "push_tokens_userId_token_key" ON "push_tokens"("userId", "token");
+
+-- AddForeignKey
+ALTER TABLE "usage_logs" ADD CONSTRAINT "usage_logs_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
 -- AddForeignKey
 ALTER TABLE "users" ADD CONSTRAINT "users_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
@@ -299,3 +375,12 @@ ALTER TABLE "ai_logs" ADD CONSTRAINT "ai_logs_tenantId_fkey" FOREIGN KEY ("tenan
 
 -- AddForeignKey
 ALTER TABLE "ai_logs" ADD CONSTRAINT "ai_logs_driverId_fkey" FOREIGN KEY ("driverId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "notifications" ADD CONSTRAINT "notifications_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "push_tokens" ADD CONSTRAINT "push_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

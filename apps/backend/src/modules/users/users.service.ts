@@ -1,10 +1,12 @@
 import { prisma } from "../../db/prisma";
 import { Errors, AppError } from "../../lib/errors";
-import { paginate, ok as okRes } from "../../lib/response";
+import { paginate } from "../../lib/response";
 import { injectTenantContext } from "../../middleware/auth.middleware";
 import { signInviteToken, verifyInviteToken } from "./invite-token";
 import type { UserContext } from "../../types/context";
 import { Role } from "@fleet/shared";
+import { enforceLimit } from "../saas/saas.usage";
+import { sendInviteEmail } from "../email/email.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,12 @@ export async function inviteUser(
     user: UserContext,
     input: { name: string; email: string; role: Role }
 ) {
+
+    if (input.role === Role.DRIVER) {
+        const tenantForPlan = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
+        await enforceLimit(user.tenantId, (tenantForPlan?.plan ?? "TRIAL") as any, "drivers");
+    }
+
     return injectTenantContext(user, async () => {
         // Check email not already in use anywhere on platform
         const existing = await prisma.user.findUnique({
@@ -110,6 +118,10 @@ export async function inviteUser(
         // Fetch tenant for name
         const tenant = await prisma.tenant.findUnique({
             where: { id: user.tenantId },
+        });
+        const inviter = await prisma.user.findUnique({
+            where: { id: user.userId },
+            select: { name: true },
         });
 
         // Create user with a temporary random password
@@ -137,9 +149,19 @@ export async function inviteUser(
             role: input.role,
         });
 
+        const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
+        await sendInviteEmail({
+            to: input.email,
+            name: input.name,
+            inviterName: inviter?.name ?? "Fleet Manager",
+            tenantName: tenant?.name ?? "Fleet AI",
+            role: input.role,
+            inviteUrl: `${frontendUrl}/accept-invite?token=${inviteToken}`,
+        }).catch(() => { });
+
         // In production this would send an email via Resend
         // For now we return the token so you can test it
-        const inviteUrl = `${process.env.WEB_URL ?? "http://localhost:5173"}/accept-invite?token=${inviteToken}`;
+        const inviteUrl = `${frontendUrl}/accept-invite?token=${inviteToken}`;
 
         console.log(`
             📧 [INVITE] New user invited:

@@ -14,4 +14,8 @@ export function getLivePositionForVehicle(
   return toLivePosition(state);
 }
 
+export function sendToUser(userId: string, message: object): boolean {
+  return fleetStore.sendToUser(userId, message);
+}
+
 export { fleetStore };

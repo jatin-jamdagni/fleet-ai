@@ -3,6 +3,8 @@ import { fleetStore } from "./ws.store";
 import { broadcastToManagers } from "./ws.broadcast";
 import { isValidCoordinate } from "@fleet/shared";
 import type { GpsPingPayload, ManagerWsMessage } from "@fleet/shared";
+import { checkGeofences } from "../geofence/geofence.service";
+import { checkSpeeding } from "../trips/trips.speeding";
 
 // ─── Process a single GPS ping from a driver ──────────────────────────────────
 
@@ -48,6 +50,27 @@ export async function processGpsPing(
     lastPingAt:   new Date(ping.timestamp),
     pingCount:    (existing?.pingCount ?? 0) + 1,
   });
+
+  // Fire geofence + speeding checks concurrently (non-blocking)
+  Promise.all([
+    checkGeofences(
+      driver.tenantId,
+      driver.tripId,
+      driver.vehicleId,
+      driver.userId,
+      ping.lat,
+      ping.lng
+    ),
+    checkSpeeding({
+      tenantId:  driver.tenantId,
+      tripId:    driver.tripId,
+      vehicleId: driver.vehicleId,
+      driverId:  driver.userId,
+      speedKmh:  ping.speed ?? 0,
+      lat:       ping.lat,
+      lng:       ping.lng,
+    }),
+  ]).catch((err) => console.error("[GPS Handler] Check error:", err));
 
   // Update driver last ping time
   driver.lastPingAt = new Date();

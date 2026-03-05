@@ -7,9 +7,26 @@ import { ok as okRes } from "../../lib/response";
 import { AppError } from "../../lib/errors";
 import { checkRateLimit, AUTH_RATE_LIMIT } from "../../lib/rate-limit";
 import { Prisma } from "../../generated/prisma/client";
+import { requestPasswordReset, resetPassword } from "./auth.reset";
 
 const REGISTER_RATE_LIMIT = { ...AUTH_RATE_LIMIT, keyPrefix: "auth-register" };
 const LOGIN_RATE_LIMIT = { ...AUTH_RATE_LIMIT, max: 5, keyPrefix: "auth-login" };
+
+function handleError(e: unknown, set: any) {
+  if (e instanceof AppError) {
+    set.status = e.statusCode;
+    return {
+      success: false,
+      error: { code: e.code, message: e.message, statusCode: e.statusCode },
+    };
+  }
+
+  set.status = 500;
+  return {
+    success: false,
+    error: { code: "INTERNAL", message: "Something went wrong", statusCode: 500 },
+  };
+}
 
 function isDbUnavailableError(error: unknown): boolean {
   if (
@@ -192,6 +209,51 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
   )
 
+  .post(
+    "/accept-invite",
+    async ({ body, accessJwt, refreshJwt, set }) => {
+      try {
+        const result = await AuthService.acceptInvite(body, accessJwt, refreshJwt);
+        return okRes(result);
+      } catch (e) { return handleError(e, set); }
+    },
+    {
+      body: t.Object({
+        token: t.String(),
+        password: t.String({ minLength: 8 }),
+        name: t.Optional(t.String({ minLength: 2, maxLength: 100 })),
+      }),
+      detail: { tags: ["Auth"], summary: "Accept invite and sign in" },
+    }
+  )
+
+  .post(
+    "/forgot-password",
+    async ({ body, set }) => {
+      try {
+        await requestPasswordReset(body.email);
+        return okRes({ message: "If that email exists, a reset link has been sent." });
+      } catch (e) { return handleError(e, set); }
+    },
+    { body: t.Object({ email: t.String() }) }
+  )
+
+  .post(
+    "/reset-password",
+    async ({ body, set }) => {
+      try {
+        await resetPassword(body.token, body.newPassword);
+        return okRes({ message: "Password reset successfully." });
+      } catch (e) { return handleError(e, set); }
+    },
+    {
+      body: t.Object({
+        token: t.String(),
+        newPassword: t.String(),
+      }),
+    }
+  )
+
   // ── POST /auth/logout ───────────────────────────────────────────────────────
   .post(
     "/logout",
@@ -269,3 +331,4 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       detail: { tags: ["Auth"], summary: "Get current user" },
     }
   );
+

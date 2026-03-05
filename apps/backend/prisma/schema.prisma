@@ -8,6 +8,7 @@ generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
+
 generator prismabox {
   provider                    = "prismabox"
   typeboxImportDependencyName = "elysia"
@@ -16,7 +17,6 @@ generator prismabox {
   output                      = "../src/generated/prismabox"
 }
 
-
 datasource db {
   provider = "postgresql"
 }
@@ -24,6 +24,7 @@ datasource db {
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 enum Plan {
+  TRIAL
   STARTER
   PROFESSIONAL
   ENTERPRISE
@@ -57,23 +58,95 @@ enum InvoiceStatus {
 // ─── Models ──────────────────────────────────────────────────────────────────
 
 model Tenant {
-  id        String    @id @default(cuid())
-  name      String
-  slug      String    @unique
-  plan      Plan      @default(STARTER)
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  stripeCustomerId     String?    @unique
+  stripeSubscriptionId String?    @unique
+  plan                 Plan       @default(TRIAL)
+  planStatus           PlanStatus @default(ACTIVE)
+  trialEndsAt          DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean    @default(false)
+
+  // ── Region / compliance ──────────────────────────────────────────────────
+  countryCode   String  @default("US")
+  currency      String  @default("USD")
+  taxId         String?
+  businessRegNo String?
+  phone         String?
+  website       String?
+
+  // ── Fleet classification ──────────────────────────────────────────────────
+  fleetType String @default("mixed")
+  // passenger | cargo | refrigerated | tanker | construction | mixed | logistics
+
+  operatingRegions String[] // ["domestic","cross_border","international"]
+  cargoTypes       String[]
+  // ["general","perishable","hazmat","fragile","livestock","bulk","automotive"]
+
+  fleetSizeTarget Int? // planned number of vehicles
+  annualKmTarget  Float? // projected annual km per vehicle
+
+  // ── Logistics flags ───────────────────────────────────────────────────────
+  requiresBOL      Boolean    @default(false) // Bill of Lading
+  requiresPOD      Boolean    @default(false) // Proof of Delivery
+  requiresWaybill  Boolean    @default(false)
+  requiresCustoms  Boolean    @default(false) // Cross-border
+  hasColdChain     Boolean    @default(false)
+  hasHazmat        Boolean    @default(false)
+  hasOverdimension Boolean    @default(false)
+  usageLogs        UsageLog[]
+
   // Relations
-  users        User[]
-  vehicles     Vehicle[]
-  trips        Trip[]
-  invoices     Invoice[]
-  aiLogs       AILog[]
-  manualChunks ManualChunk[]
+  users              User[]
+  vehicles           Vehicle[]
+  trips              Trip[]
+  invoices           Invoice[]
+  aiLogs             AILog[]
+  manualChunks       ManualChunk[]
+  notifications      Notification[]
+  geofences          Geofence[]
+  scheduledTrips     ScheduledTrip[]
+  documents          Document[]
+  maintenanceRecords MaintenanceRecord[]
+  hosLogs            HosLog[]
+  driverScores       DriverScore[]
+  settings           TenantSettings?
+  shareLinks         ShareLink[]
+  apiKeys            ApiKey[]
+  integrationConfigs IntegrationConfig[]
+  fuelLogs           FuelLog[]
+  webhookEndpoints   WebhookEndpoint[]
+  rateCards          RateCard[]
 
   @@map("tenants")
+}
+
+enum PlanStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+}
+
+model UsageLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  metric    String // "ai_query" | "trip_started" | "vehicle_created"
+  count     Int      @default(1)
+  date      DateTime @default(now()) @db.Date
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, metric, date])
+  @@index([tenantId, date])
+  @@map("usage_logs")
 }
 
 model User {
@@ -88,11 +161,28 @@ model User {
   deletedAt    DateTime?
   lastLoginAt  DateTime?
 
+  licenceNumber String?
+  licenceExpiry DateTime?
+
   // Relations
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  vehicle     Vehicle? @relation("AssignedDriver")
-  drivenTrips Trip[]   @relation("DriverTrips")
-  aiLogs      AILog[]
+  tenant                 Tenant              @relation(fields: [tenantId], references: [id])
+  vehicle                Vehicle?            @relation("AssignedDriver")
+  drivenTrips            Trip[]              @relation("DriverTrips")
+  aiLogs                 AILog[]
+  pushTokens             PushToken[]
+  notifications          Notification[]
+  createdScheduledTrips  ScheduledTrip[]     @relation("ScheduleCreator")
+  assignedScheduledTrips ScheduledTrip[]     @relation("ScheduledDriver")
+  maintenanceRecords     MaintenanceRecord[] @relation("MaintenanceCreator")
+  hosLogs                HosLog[]            @relation("HosLog")
+  driverScores           DriverScore[]       @relation("DriverScore")
+  documents              Document[]
+  // shareLinks             ShareLink[]
+  apiKeys                ApiKey[]            @relation("ApiKeyCreator")
+
+  shareLinks       ShareLink[]       @relation("ShareLinkCreator")
+  fuelLogs         FuelLog[]         @relation("FuelLogger")
+  webhookEndpoints WebhookEndpoint[] @relation("WebhookCreator")
 
   @@index([tenantId])
   @@index([email])
@@ -115,12 +205,23 @@ model Vehicle {
   updatedAt        DateTime      @updatedAt
   deletedAt        DateTime?
 
+  odometerKm         Float  @default(0)
+  maintenanceEveryKm Float? // e.g. 10000 km
+  maintenanceDueKm   Float? // calculated: last service + interval
+
   // Relations
-  tenant         Tenant        @relation(fields: [tenantId], references: [id])
-  assignedDriver User?         @relation("AssignedDriver", fields: [assignedDriverId], references: [id])
-  trips          Trip[]
-  manualChunks   ManualChunk[]
-  invoices       Invoice[]
+  tenant             Tenant              @relation(fields: [tenantId], references: [id])
+  assignedDriver     User?               @relation("AssignedDriver", fields: [assignedDriverId], references: [id])
+  trips              Trip[]
+  manualChunks       ManualChunk[]
+  invoices           Invoice[]
+  speedLimitKmh      Float?
+  speedingEvents     SpeedingEvent[]
+  scheduledTrips     ScheduledTrip[]
+  geofenceEvents     GeofenceEvent[]
+  maintenanceRecords MaintenanceRecord[]
+  documents          Document[]
+  fuelLogs           FuelLog[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -142,11 +243,18 @@ model Trip {
   updatedAt  DateTime   @updatedAt
 
   // Relations
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  vehicle  Vehicle   @relation(fields: [vehicleId], references: [id])
-  driver   User      @relation("DriverTrips", fields: [driverId], references: [id])
-  gpsPings GpsPing[]
-  invoice  Invoice?
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  vehicle        Vehicle         @relation(fields: [vehicleId], references: [id])
+  driver         User            @relation("DriverTrips", fields: [driverId], references: [id])
+  gpsPings       GpsPing[]
+  invoice        Invoice?
+  geofenceEvents GeofenceEvent[]
+  speedingEvents SpeedingEvent[]
+
+  hosLogs    HosLog[]
+  shareLinks ShareLink[]
+  manifest   TripManifest?
+  waypoints  TripWaypoint[]
 
   @@index([tenantId])
   @@index([vehicleId])
@@ -188,6 +296,12 @@ model Invoice {
   status      InvoiceStatus @default(PENDING)
   generatedAt DateTime      @default(now())
   paidAt      DateTime?
+
+  subtotal  Float  @default(0)
+  taxAmount Float  @default(0)
+  taxLabel  String @default("Tax")
+  taxRate   Float  @default(0)
+  lineItems Json?
 
   // Relations
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
@@ -267,4 +381,501 @@ model AuditLog {
   @@index([userId])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id])
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  read      Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([tenantId, userId, read])
+  @@index([tenantId, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  TRIP_STARTED
+  TRIP_ENDED
+  TRIP_FORCE_ENDED
+  INVOICE_GENERATED
+  INVOICE_PAID
+  VEHICLE_ASSIGNED
+  DRIVER_INVITED
+  PLAN_LIMIT_WARNING
+  PAYMENT_FAILED
+  SYSTEM
+}
+
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String
+  platform  String // ios | android
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@map("push_tokens")
+}
+
+model Geofence {
+  id           String                                @id @default(uuid())
+  tenantId     String
+  tenant       Tenant                                @relation(fields: [tenantId], references: [id])
+  name         String
+  description  String?
+  color        String                                @default("#f59e0b")
+  polygon      Unsupported("geometry(Polygon,4326)")
+  active       Boolean                               @default(true)
+  alertOnEnter Boolean                               @default(true)
+  alertOnExit  Boolean                               @default(true)
+  createdAt    DateTime                              @default(now())
+  updatedAt    DateTime                              @updatedAt
+  deletedAt    DateTime?
+
+  events GeofenceEvent[]
+
+  @@index([tenantId])
+  @@map("geofences")
+}
+
+model GeofenceEvent {
+  id         String   @id @default(uuid())
+  tenantId   String
+  geofenceId String
+  geofence   Geofence @relation(fields: [geofenceId], references: [id])
+  tripId     String
+  trip       Trip     @relation(fields: [tripId], references: [id])
+  vehicleId  String
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  driverId   String?
+  eventType  String // ENTER | EXIT
+  lat        Float
+  lng        Float
+  occurredAt DateTime @default(now())
+
+  @@index([tenantId, occurredAt])
+  @@index([geofenceId])
+  @@map("geofence_events")
+}
+
+model ScheduledTrip {
+  id             String         @id @default(uuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  vehicleId      String
+  vehicle        Vehicle        @relation(fields: [vehicleId], references: [id])
+  driverId       String
+  driver         User           @relation("ScheduledDriver", fields: [driverId], references: [id])
+  title          String
+  notes          String?
+  scheduledAt    DateTime
+  reminderSentAt DateTime?
+  status         ScheduleStatus @default(PENDING)
+  createdById    String
+  createdBy      User           @relation("ScheduleCreator", fields: [createdById], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([tenantId, scheduledAt])
+  @@index([driverId, scheduledAt])
+  @@map("scheduled_trips")
+}
+
+enum ScheduleStatus {
+  PENDING
+  NOTIFIED
+  STARTED
+  COMPLETED
+  CANCELED
+}
+
+model SpeedingEvent {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tripId     String
+  trip       Trip     @relation(fields: [tripId], references: [id])
+  vehicleId  String
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  driverId   String?
+  speedKmh   Float
+  limitKmh   Float
+  lat        Float
+  lng        Float
+  occurredAt DateTime @default(now())
+
+  @@index([tenantId, occurredAt])
+  @@index([tripId])
+  @@map("speeding_events")
+}
+
+// ─── Driver Safety Score ──────────────────────────────────────────────────────
+
+model DriverScore {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  driverId        String
+  driver          User     @relation("DriverScore", fields: [driverId], references: [id])
+  date            DateTime @db.Date
+  totalTrips      Int      @default(0)
+  totalDistanceKm Float    @default(0)
+  avgSpeedKmh     Float    @default(0)
+  maxSpeedKmh     Float    @default(0)
+  speedingEvents  Int      @default(0)
+  hoursOnRoad     Float    @default(0)
+  score           Float    @default(100) // 0–100
+  scoreBreakdown  Json? // { speed: 40, hos: 30, consistency: 30 }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, driverId, date])
+  @@index([tenantId, driverId])
+  @@index([tenantId, date])
+  @@map("driver_scores")
+}
+
+// ─── Hours of Service ─────────────────────────────────────────────────────────
+
+model HosLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  driverId   String
+  driver     User     @relation("HosLog", fields: [driverId], references: [id])
+  tripId     String?
+  trip       Trip?    @relation(fields: [tripId], references: [id])
+  date       DateTime @db.Date
+  drivingMin Int      @default(0) // minutes driven this day
+  onDutyMin  Int      @default(0) // includes non-driving on-duty
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, driverId, date])
+  @@index([tenantId, driverId, date])
+  @@map("hos_logs")
+}
+
+// ─── Maintenance ──────────────────────────────────────────────────────────────
+
+model MaintenanceRecord {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  vehicleId     String
+  vehicle       Vehicle   @relation(fields: [vehicleId], references: [id])
+  type          String // oil_change | tire_rotation | brake_check | full_service | other
+  description   String?
+  odometer      Float // km at time of service
+  cost          Float?
+  performedAt   DateTime
+  nextDueKm     Float? // next service trigger (odometer + interval)
+  nextDueDateAt DateTime? // date-based due trigger
+  notes         String?
+  createdById   String
+  createdBy     User      @relation("MaintenanceCreator", fields: [createdById], references: [id])
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, vehicleId])
+  @@map("maintenance_records")
+}
+
+// ─── Documents ────────────────────────────────────────────────────────────────
+
+model Document {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  entityType String // vehicle | driver
+  entityId   String // vehicleId or userId
+  docType    String // insurance | registration | licence | mot | other
+  label      String
+  expiresAt  DateTime?
+  fileUrl    String?
+  notifiedAt DateTime? // when expiry reminder was last sent
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  vehicles   Vehicle[]
+  users      User[]
+
+  @@index([tenantId, entityId])
+  @@index([tenantId, expiresAt])
+  @@map("documents")
+}
+
+// ─── Tenant Branding / Settings ───────────────────────────────────────────────
+
+model TenantSettings {
+  id       String @id @default(uuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  // Branding
+  companyName  String?
+  logoUrl      String?
+  primaryColor String  @default("#f59e0b")
+  accentColor  String  @default("#ffffff")
+  customDomain String? @unique
+  timezone     String  @default("UTC")
+  currency     String  @default("USD")
+  distanceUnit String  @default("km") // km | mi
+
+  // Invoice customisation
+  invoicePrefix String  @default("INV")
+  invoiceFooter String?
+  vatNumber     String?
+  address       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("tenant_settings")
+}
+
+// ─── Public Trip Share Links ──────────────────────────────────────────────────
+
+model ShareLink {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  tripId      String
+  trip        Trip      @relation(fields: [tripId], references: [id])
+  token       String    @unique
+  label       String?
+  expiresAt   DateTime?
+  viewCount   Int       @default(0)
+  createdById String
+  createdBy   User      @relation("ShareLinkCreator", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([token])
+  @@map("share_links")
+}
+
+// ─── API Keys ─────────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  name        String
+  keyHash     String    @unique // bcrypt hash of full key
+  keyPrefix   String // first 8 chars for display e.g. "flk_a1b2"
+  scopes      String[] // ["trips:read","vehicles:read","invoices:read"]
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdById String
+  createdBy   User      @relation("ApiKeyCreator", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+
+  usageLogs ApiKeyUsage[]
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model ApiKeyUsage {
+  id        String   @id @default(uuid())
+  apiKeyId  String
+  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id])
+  endpoint  String
+  method    String
+  status    Int
+  createdAt DateTime @default(now())
+
+  @@index([apiKeyId, createdAt])
+  @@map("api_key_usage")
+}
+
+// ─── Outbound Webhooks ────────────────────────────────────────────────────────
+
+model WebhookEndpoint {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  name        String
+  url         String
+  secret      String // HMAC signing secret
+  events      String[] // ["trip.started","trip.ended","invoice.generated"]
+  active      Boolean  @default(true)
+  createdById String
+  createdBy   User     @relation("WebhookCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id           String          @id @default(uuid())
+  endpointId   String
+  endpoint     WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  event        String
+  payload      Json
+  status       Int // HTTP status from receiver
+  responseBody String?
+  durationMs   Int?
+  attempt      Int             @default(1)
+  deliveredAt  DateTime        @default(now())
+
+  @@index([endpointId, deliveredAt])
+  @@map("webhook_deliveries")
+}
+
+// ─── Geocode Cache ────────────────────────────────────────────────────────────
+
+model GeocodeCache {
+  id        String   @id @default(uuid())
+  lat       Float
+  lng       Float
+  address   String
+  city      String?
+  country   String?
+  createdAt DateTime @default(now())
+
+  @@unique([lat, lng])
+  @@map("geocode_cache")
+}
+
+// ─── Fuel Logs ────────────────────────────────────────────────────────────────
+
+model FuelLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  vehicleId  String
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  litres     Float
+  pricePerL  Float
+  totalCost  Float
+  odometerKm Float
+  fuelType   String   @default("diesel") // diesel | petrol | electric | hybrid
+  station    String?
+  notes      String?
+  loggedById String
+  loggedBy   User     @relation("FuelLogger", fields: [loggedById], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, vehicleId])
+  @@index([tenantId, createdAt])
+  @@map("fuel_logs")
+}
+
+// ─── Integration Config ───────────────────────────────────────────────────────
+
+model IntegrationConfig {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  provider   String // quickbooks | xero | google_maps
+  enabled    Boolean   @default(true)
+  config     Json // provider-specific config, encrypted at app layer
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, provider])
+  @@map("integration_configs")
+}
+
+// ─── Logistics Trip Extensions ────────────────────────────────────────────────
+
+model TripManifest {
+  id       String @id @default(uuid())
+  tenantId String
+  tripId   String @unique
+  trip     Trip   @relation(fields: [tripId], references: [id])
+
+  // Cargo
+  cargoDescription String?
+  cargoType        String?
+  weightKg         Float?
+  volumeM3         Float?
+  pallets          Int?
+  temperatureMin   Float? // for cold chain
+  temperatureMax   Float?
+
+  // References
+  bolNumber     String? // Bill of Lading
+  poNumber      String? // Purchase Order
+  waybillNumber String?
+  sealNumber    String?
+
+  // Delivery
+  receiverName    String?
+  receiverPhone   String?
+  receiverAddress String?
+  deliveryNotes   String?
+  podSignedAt     DateTime?
+  podSignedBy     String?
+  podImageUrl     String? // base64 or CDN URL of signature/photo
+
+  // Customs
+  customsDeclaration String?
+  hsCode             String?
+  originCountry      String?
+  destinationCountry String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("trip_manifests")
+}
+
+// ─── Trip Waypoints ───────────────────────────────────────────────────────────
+
+model TripWaypoint {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tripId      String
+  trip        Trip      @relation(fields: [tripId], references: [id])
+  sequence    Int
+  label       String
+  address     String?
+  lat         Float?
+  lng         Float?
+  arrivedAt   DateTime?
+  departedAt  DateTime?
+  durationMin Int?
+  notes       String?
+  status      String    @default("PENDING")
+  // PENDING | ARRIVED | COMPLETED | SKIPPED
+
+  @@index([tenantId, tripId])
+  @@map("trip_waypoints")
+}
+
+// ─── Pricing Rate Cards (per tenant, per country) ─────────────────────────────
+
+model RateCard {
+  id            String   @id @default(uuid())
+  tenantId      String   @unique
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  currency      String
+  ratePerKm     Float    @default(1.50)
+  ratePerHour   Float?
+  baseCharge    Float    @default(0)
+  waitingPerMin Float?
+  taxRate       Float    @default(0)
+  taxLabel      String   @default("Tax")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("rate_cards")
 }
