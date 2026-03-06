@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import * as Location from "expo-location";
 import { driverWS } from "../lib/ws";
 import { useTripStore } from "../store/trip.store";
@@ -10,14 +10,29 @@ export function useGPS() {
   const setTracking   = useTripStore((s) => s.setTracking);
   const updatePing    = useTripStore((s) => s.updatePing);
   const incrementPing = useTripStore((s) => s.incrementPing);
+  const isTracking    = useTripStore((s) => s.isTracking);
   const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const watchRef      = useRef<Location.LocationSubscription | null>(null);
   const latestPos     = useRef<{ lat: number; lng: number; speed: number; heading: number } | null>(null);
+  const [wsRegistered, setWsRegistered] = useState(driverWS.getState().registered);
+
+  useEffect(() => {
+    return driverWS.onState((state) => {
+      setWsRegistered(state.registered);
+    });
+  }, []);
 
   const startTracking = useCallback(async () => {
+    if (!activeTrip) return false;
+    if (intervalRef.current || watchRef.current) {
+      setTracking(true);
+      return true;
+    }
+
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
       console.warn("[GPS] Permission denied");
+      setTracking(false);
       return false;
     }
 
@@ -29,13 +44,14 @@ export function useGPS() {
         timeInterval:     1000, // at least every 1s
       },
       (loc) => {
+        const currentTrip = useTripStore.getState().activeTrip;
         latestPos.current = {
           lat:     loc.coords.latitude,
           lng:     loc.coords.longitude,
           speed:   Math.max(0, (loc.coords.speed ?? 0) * 3.6), // m/s → km/h
           heading: loc.coords.heading ?? 0,
         };
-        if (activeTrip) {
+        if (currentTrip) {
           updatePing(
             loc.coords.latitude,
             loc.coords.longitude,
@@ -47,10 +63,11 @@ export function useGPS() {
 
     // Send ping every 3 seconds
     intervalRef.current = setInterval(() => {
-      if (!latestPos.current || !activeTrip) return;
+      const currentTrip = useTripStore.getState().activeTrip;
+      if (!latestPos.current || !currentTrip) return;
 
       driverWS.sendGpsPing({
-        tripId:    activeTrip.id,
+        tripId:    currentTrip.id,
         lat:       latestPos.current.lat,
         lng:       latestPos.current.lng,
         speed:     latestPos.current.speed,
@@ -63,7 +80,7 @@ export function useGPS() {
 
     setTracking(true);
     return true;
-  }, [activeTrip?.id]);
+  }, [activeTrip?.id, incrementPing, setTracking, updatePing]);
 
   const stopTracking = useCallback(() => {
     if (intervalRef.current) {
@@ -74,17 +91,31 @@ export function useGPS() {
     watchRef.current = null;
     setTracking(false);
     latestPos.current = null;
-  }, []);
+  }, [setTracking]);
 
-  // Start/stop based on active trip
+  // Keep websocket registration synced with active trip.
   useEffect(() => {
-    if (activeTrip && driverWS.registered) {
-      startTracking();
-    } else {
+    if (!activeTrip) {
+      stopTracking();
+      return;
+    }
+
+    driverWS.register(activeTrip.id);
+  }, [activeTrip?.id, stopTracking]);
+
+  // Start tracking only after websocket REGISTERED ack is received.
+  useEffect(() => {
+    if (!activeTrip) {
+      stopTracking();
+      return;
+    }
+
+    if (wsRegistered) {
+      void startTracking();
+    } else if (isTracking) {
       stopTracking();
     }
-    return stopTracking;
-  }, [activeTrip?.id, driverWS.registered]);
+  }, [activeTrip?.id, isTracking, startTracking, stopTracking, wsRegistered]);
 
   return { startTracking, stopTracking, latestPos };
 }

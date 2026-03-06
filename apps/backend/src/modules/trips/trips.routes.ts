@@ -71,6 +71,20 @@ export const tripDriverRoutes = new Elysia({ prefix: "/trips" })
       query:  TripListQuery,
       detail: { tags: ["Trips"], summary: "List driver's own trips", security: [{ bearerAuth: [] }] },
     }
+  )
+
+  .get(
+    "/:id",
+    async ({ user, params, set }) => {
+      try {
+        const trip = await TripService.getTrip(user, params.id);
+        return okRes(trip);
+      } catch (e) { return handleError(e, set); }
+    },
+    {
+      params: TripIdParam,
+      detail: { tags: ["Trips"], summary: "Get driver's own trip detail", security: [{ bearerAuth: [] }] },
+    }
   );
 
 // ─── Manager trip routes ──────────────────────────────────────────────────────

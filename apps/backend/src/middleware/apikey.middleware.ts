@@ -1,5 +1,5 @@
 import Elysia from "elysia";
-import { authenticateApiKey, logApiKeyUsage } from "../modules/apikeys/apikeys.service";
+import { authenticateApiKey } from "../modules/apikeys/apikeys.service";
 import { AppError } from "../lib/errors";
 
 type ApiKeyAuthInfo = {
@@ -9,7 +9,7 @@ type ApiKeyAuthInfo = {
 };
 
 export const apiKeyAuth = new Elysia()
-    .derive({ as: "global" }, async ({ request, set }) => {
+    .derive({ as: "scoped" }, async ({ request, set }) => {
         const authHeader = request.headers.get("Authorization") ?? "";
         const rawKey = authHeader.startsWith("Bearer flk_")
             ? authHeader.slice(7)

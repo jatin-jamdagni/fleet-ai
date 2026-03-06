@@ -5,7 +5,7 @@ import * as AuthService from "./auth.service";
 import { RegisterBody, LoginBody, RefreshBody } from "./auth.schema";
 import { ok as okRes } from "../../lib/response";
 import { AppError } from "../../lib/errors";
-import { checkRateLimit, AUTH_RATE_LIMIT } from "../../lib/rate-limit";
+import { checkRateLimitAsync, AUTH_RATE_LIMIT } from "../../lib/rate-limit";
 import { Prisma } from "../../generated/prisma/client";
 import { requestPasswordReset, resetPassword } from "./auth.reset";
 
@@ -72,7 +72,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     async ({ body, accessJwt, refreshJwt, set, request }) => {
       // Rate limit by IP
       const ip = request.headers.get("x-forwarded-for") ?? "unknown";
-      const rl = checkRateLimit(ip, REGISTER_RATE_LIMIT);
+      const rl = await checkRateLimitAsync(ip, REGISTER_RATE_LIMIT);
       if (!rl.allowed) {
         set.status = 429;
         return {
@@ -128,7 +128,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     async ({ body, accessJwt, refreshJwt, set, request }) => {
       // Rate limit by IP — stricter on login (brute force protection)
       const ip = request.headers.get("x-forwarded-for") ?? "unknown";
-      const rl = checkRateLimit(ip, LOGIN_RATE_LIMIT);
+      const rl = await checkRateLimitAsync(ip, LOGIN_RATE_LIMIT);
       if (!rl.allowed) {
         set.status = 429;
         return {
@@ -331,4 +331,3 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       detail: { tags: ["Auth"], summary: "Get current user" },
     }
   );
-

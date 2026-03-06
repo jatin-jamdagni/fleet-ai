@@ -64,15 +64,28 @@ class FleetWebSocket {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private url:       string = "";
   private connected: boolean = false;
+  private manuallyDisconnected = false;
 
   connect(token: string) {
-    const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:3000";
-    this.url     = `${WS_URL}/ws?token=${token}`;
+    if (!token) return;
+
+    const baseUrl = (import.meta.env.VITE_WS_URL ?? "ws://localhost:3000").replace(/\/+$/, "");
+    const wsBase = baseUrl.endsWith("/ws") ? baseUrl : `${baseUrl}/ws`;
+
+    this.url = `${wsBase}?token=${encodeURIComponent(token)}`;
+    this.manuallyDisconnected = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this._connect();
   }
 
   private _connect() {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+    if (!this.url || this.manuallyDisconnected) return;
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
 
     this.ws = new WebSocket(this.url);
 
@@ -96,9 +109,17 @@ class FleetWebSocket {
       } catch { /* ignore */ }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       this.connected = false;
       this._stopHeartbeat();
+
+      if (this.manuallyDisconnected) return;
+
+      if (event.code === 1008) {
+        console.warn("[WS] Unauthorized connection rejected. Reconnect paused until next login.");
+        return;
+      }
+
       console.log("[WS] Disconnected — reconnecting in 3s");
       this.reconnectTimer = setTimeout(() => this._connect(), 3000);
     };
@@ -124,7 +145,11 @@ class FleetWebSocket {
   }
 
   disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.manuallyDisconnected = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this._stopHeartbeat();
     this.ws?.close();
     this.ws        = null;

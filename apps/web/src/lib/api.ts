@@ -25,7 +25,13 @@ import type {
   VehicleStatus,
 } from "@fleet/shared";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000/api/v1";
+function normalizeApiUrl(raw?: string): string {
+  const source = (raw ?? "http://localhost:3000/api/v1").trim().replace(/\/+$/, "");
+  return /\/api\/v1$/i.test(source) ? source : `${source}/api/v1`;
+}
+
+export const API_URL = normalizeApiUrl(import.meta.env.VITE_API_URL);
+export const API_ROOT = API_URL.replace(/\/api\/v1$/i, "");
 
 export const api = axios.create({
   baseURL: API_URL,

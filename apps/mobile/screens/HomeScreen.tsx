@@ -23,6 +23,7 @@ export default function HomeScreen() {
   const activeTrip = useTripStore((s) => s.activeTrip);
   const setActive  = useTripStore((s) => s.setActiveTrip);
   const isTracking = useTripStore((s) => s.isTracking);
+  const [wsState, setWsState] = useState(driverWS.getState());
 
   useGpsTracking();
   usePushNotifications();
@@ -35,10 +36,15 @@ export default function HomeScreen() {
       if (msg.type === "REGISTERED") {
         console.log("[WS] Registered for trip");
       }
+      if (msg.type === "ERROR") {
+        console.warn("[WS] Error:", msg.payload?.message ?? "Unknown websocket error");
+      }
     });
+    const offState = driverWS.onState(setWsState);
 
     return () => {
       off();
+      offState();
       driverWS.disconnect();
     };
   }, []);
@@ -56,6 +62,38 @@ export default function HomeScreen() {
     queryFn:  () => tripsApi.myTrips({ pageSize: 5 }).then((r) => r.data),
     refetchInterval: activeTrip ? false : 30_000,
   });
+
+  // Restore active trip state after refresh/relogin so GPS can continue.
+  useEffect(() => {
+    if (!tripsRes?.data) return;
+
+    const serverTrips = tripsRes.data;
+    const liveTrip = serverTrips.find(
+      (t: any) => t.status === "ACTIVE" || t.status === "PENDING"
+    );
+
+    if (!liveTrip) {
+      return;
+    }
+
+    if (!activeTrip || activeTrip.id !== liveTrip.id) {
+      setActive({
+        id: liveTrip.id,
+        vehicleId: liveTrip.vehicleId,
+        licensePlate: liveTrip.vehicle?.licensePlate ?? "—",
+        make: liveTrip.vehicle?.make ?? "Unknown",
+        model: liveTrip.vehicle?.model ?? "Vehicle",
+        startTime: liveTrip.startTime,
+        distanceKm: Number(liveTrip.distanceKm ?? 0),
+        pingCount: 0,
+        lastLat: null,
+        lastLng: null,
+        speed: 0,
+      });
+    }
+
+    driverWS.register(liveTrip.id);
+  }, [activeTrip?.id, setActive, tripsRes?.data]);
 
   // Find my assigned vehicle
   const myVehicle = vehicleRes?.data ?? null;
@@ -79,6 +117,7 @@ export default function HomeScreen() {
       });
 
       // Register WebSocket
+      driverWS.connect();
       driverWS.register(trip.id);
 
       qc.invalidateQueries({ queryKey: ["my-trips"] });
@@ -170,10 +209,10 @@ export default function HomeScreen() {
                 width:           8,
                 height:          8,
                 borderRadius:    4,
-                backgroundColor: driverWS.connected ? C.green : C.faint,
+                backgroundColor: wsState.connected ? C.green : C.faint,
               }} />
               <Text style={{ color: C.muted, fontSize: 11, letterSpacing: 1 }}>
-                {driverWS.connected ? "LIVE" : "OFFLINE"}
+                {wsState.connected ? "LIVE" : wsState.connecting ? "CONNECTING" : "OFFLINE"}
               </Text>
             </View>
             <TouchableOpacity onPress={handleLogout}>
@@ -201,7 +240,15 @@ export default function HomeScreen() {
               backgroundColor: C.amber,
             }} />
             <Text style={{ color: C.amber, fontSize: 12, fontWeight: "700", letterSpacing: 2 }}>
-              TRIP ACTIVE — {isTracking ? "GPS STREAMING" : "CONNECTING..."}
+              TRIP ACTIVE — {
+                isTracking
+                  ? "GPS STREAMING"
+                  : wsState.connecting
+                    ? "CONNECTING..."
+                    : wsState.connected
+                      ? "WAITING FOR REGISTER ACK..."
+                      : "WS OFFLINE"
+              }
             </Text>
             {isTracking && (
               <Text style={{ color: C.amber, fontSize: 11, marginLeft: "auto" }}>

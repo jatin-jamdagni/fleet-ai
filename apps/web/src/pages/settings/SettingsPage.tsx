@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { api, API_ROOT } from "../../lib/api";
 import { Card, Button, Input, Badge, Spinner } from "../../components/ui";
 import toast from "react-hot-toast";
 
@@ -730,7 +730,7 @@ export default function SettingsPage() {
               <p className="text-xs font-mono text-slate-600">
                 Base URL:{" "}
                 <code className="text-amber-400">
-                  {import.meta.env.VITE_API_URL?.replace("/api/v1", "") ?? "http://localhost:3000"}
+                  {API_ROOT}
                   /public/v1
                 </code>
               </p>

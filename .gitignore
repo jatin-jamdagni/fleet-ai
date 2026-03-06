@@ -47,4 +47,15 @@ yarn-error.log*
 *.key
 backups/
 certbot-conf/
-certbot-www/
+certbot-www/node_modules/
+apps/**/.env
+apps/**/.env.*
+!apps/**/.env.example
+*.log
+dist/
+.expo/
+ios/
+android/
+*.orig.*
+Thumbs.db
+node_modules/

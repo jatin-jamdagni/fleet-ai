@@ -5,10 +5,9 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import axios from "axios";
 import { format } from "date-fns";
+import { API_URL } from "../../lib/api";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
-
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3000/api/v1";
 
 type ShareBranding = {
   companyName: string;
@@ -50,7 +49,7 @@ function getLast<T>(items: T[]): T | undefined {
 }
 
 async function fetchShareData(token: string): Promise<ShareData> {
-  const res = await axios.get(`${API}/share-links/resolve/${token}`);
+  const res = await axios.get(`${API_URL}/share-links/resolve/${token}`);
   return res.data.data as ShareData;
 }
 

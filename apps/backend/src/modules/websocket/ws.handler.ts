@@ -17,6 +17,9 @@ type WsAuthData = {
   email?: string;
 };
 
+let lastMissingAuthLogAt = 0;
+const MISSING_AUTH_LOG_INTERVAL_MS = 15_000;
+
 function getWsAuthData(ws: any): WsAuthData | null {
   const data = ws?.data as Partial<WsAuthData> | undefined;
   if (!data) return null;
@@ -40,6 +43,24 @@ function closeUnauthorizedSocket(ws: any) {
   }
 }
 
+function readAuthorizationHeader(headers: any): string {
+  if (!headers) return "";
+  if (typeof headers.authorization === "string") return headers.authorization;
+  if (typeof headers.get === "function") {
+    return headers.get("authorization") ?? "";
+  }
+  return "";
+}
+
+function logMissingAuthContext() {
+  const now = Date.now();
+  if (now - lastMissingAuthLogAt < MISSING_AUTH_LOG_INTERVAL_MS) {
+    return;
+  }
+  lastMissingAuthLogAt = now;
+  console.warn("[WS] Connection rejected: missing auth context");
+}
+
 export const wsHandler = new Elysia({ prefix: "/ws" })
   .use(
     jwt({
@@ -57,18 +78,20 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
 
     // ── Upgrade — validate JWT before accepting connection ────────────────────
     async upgrade({ query, headers, accessJwt, set }: any) {
-      const token = (query?.token as string) ??
-        headers.authorization?.replace("Bearer ", "");
+      const queryToken = typeof query?.token === "string" ? query.token : "";
+      const authHeader = readAuthorizationHeader(headers);
+      const headerToken = authHeader.replace(/^Bearer\s+/i, "");
+      const token = queryToken || headerToken;
 
       if (!token) {
         set.status = 401;
-        return { error: "No token provided" };
+        return;
       }
 
       const payload = await accessJwt.verify(token);
       if (!payload) {
         set.status = 401;
-        return { error: "Invalid token" };
+        return;
       }
 
       return {
@@ -85,7 +108,7 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
     async open(ws) {
       const auth = getWsAuthData(ws);
       if (!auth) {
-        console.warn("[WS] Connection rejected: missing auth context");
+        logMissingAuthContext();
         closeUnauthorizedSocket(ws);
         return;
       }
@@ -172,6 +195,14 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
         msg = typeof raw === "string" ? JSON.parse(raw) : raw;
       } catch {
         ws.send(JSON.stringify({ type: "ERROR", payload: { message: "Invalid JSON" } }));
+        return;
+      }
+
+      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
+        ws.send(JSON.stringify({
+          type: "ERROR",
+          payload: { message: "Malformed websocket message. Expected { type, payload? }" },
+        }));
         return;
       }
 
@@ -279,7 +310,7 @@ export const wsHandler = new Elysia({ prefix: "/ws" })
       // ── Unknown message ────────────────────────────────────────────────────
       ws.send(JSON.stringify({
         type:    "ERROR",
-        payload: { message: `Unknown message type: ${msg.type}` },
+        payload: { message: `Unknown message type: ${String(msg.type)}` },
       }));
     },
 

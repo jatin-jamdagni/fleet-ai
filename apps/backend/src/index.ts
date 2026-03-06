@@ -162,6 +162,7 @@ const app = new Elysia()
   .group("/api/v1", (app) =>
     app
       .use(aiHealthRoutes)
+      .use(countryRoutes)
       .use(authRoutes)
       .use(userPublicRoutes)   // ← public first (accept-invite)
       .use(userRoutes)         // ← protected manager routes
